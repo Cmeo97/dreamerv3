@@ -3,7 +3,7 @@ defaults:
   seed: 0
   method: name
   task: dummy_disc
-  logdir: /dev/null
+  logdir: ~/scratch/dreamerv3/logdir
   replay: uniform
   replay_size: 1e6
   replay_online: False

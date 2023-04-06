@@ -1,5 +1,6 @@
 .pytest_cache
 dist
+logs_training/
 __pycache__/
 *.py[cod]
 *.egg-info
