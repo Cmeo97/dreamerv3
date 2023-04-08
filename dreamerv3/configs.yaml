@@ -208,6 +208,13 @@ loconav:
   encoder: {mlp_keys: '.*', cnn_keys: 'image'}
   decoder: {mlp_keys: '.*', cnn_keys: 'image'}
 
+pinpad:
+
+  task: pinpad_five
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+
 small:
   rssm.deter: 512
   .*\.cnn_depth: 32
