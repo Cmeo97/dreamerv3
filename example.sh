@@ -3,7 +3,7 @@
 #SBATCH --job-name=dreamerv3
 #SBATCH --partition=long                        
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:rtx8000:2
+#SBATCH --gres=gpu:rtx8000:1
 #SBATCH --mem=120G                                     
 
 
@@ -16,7 +16,7 @@ conda activate ~/.conda/envs/mamba/envs/ECS
 
 env=$1
 task=$2
-seed=$4
+seed=$3
 
 python dreamerv3/train.py \
   --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/"${seed}""-"$(date "+%Y%m%d-%H%M%S") \

@@ -197,6 +197,36 @@ class WorldModel(nj.Module):
     traj['weight'] = jnp.cumprod(discount * traj['cont'], 0) / discount
     return traj
 
+  def imagine_carry(self, policy, start, horizon, carry):
+    first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
+    keys = list(self.rssm.initial(1).keys())
+    start = {k: v for k, v in start.items() if k in keys}
+    keys += list(carry.keys()) + ['action']
+    states = [start]
+    outs, carry = policy(start, carry)
+    action = outs['action']
+    if hasattr(action, 'sample'):
+      action = action.sample()
+    actions = [action]
+    carries = [carry]
+    for _ in range(horizon):
+      states.append(self.rssm.img_step(states[-1], actions[-1]))
+      outs, carry = policy(states[-1], carry)
+      action = outs['action']
+      if hasattr(action, 'sample'):
+        action = action.sample()
+      actions.append(action)
+      carries.append(carry)
+    transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
+    traj = {**transp(states), **transp(carries), 'action': actions}
+    traj = {k: jnp.stack(v, 0) for k, v in traj.items()}
+    cont = self.heads['cont'](traj).mean()
+    cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
+    traj['cont'] = cont
+    traj['weight'] = jnp.cumprod(
+        self.config.imag_discount * cont) / self.config.imag_discount
+    return traj
+
   def report(self, data):
     state = self.initial(len(data['is_first']))
     report = {}
@@ -251,8 +281,12 @@ class ImagActorCritic(nj.Module):
     self.actor = nets.MLP(
         name='actor', dims='deter', shape=act_space.shape, **config.actor,
         dist=config.actor_dist_disc if disc else config.actor_dist_cont)
+    self.advnorm = jaxutils.Moments(**config.advnorm, name=f'advnorm')
     self.retnorms = {
         k: jaxutils.Moments(**config.retnorm, name=f'retnorm_{k}')
+        for k in critics}
+    self.scorenorms = {
+        k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
         for k in critics}
     self.opt = jaxutils.Optimizer(name='actor_opt', **config.actor_opt)
 
@@ -274,6 +308,57 @@ class ImagActorCritic(nj.Module):
       mets = critic.train(traj, self.actor)
       metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     return traj, metrics
+  
+  ##TF Version from Director 
+  #def update(self, traj, tape=None):
+  #  tape = tape or tf.GradientTape()
+  #  metrics = {}
+  #  for key, critic in self.critics.items():
+  #    mets = critic.train(traj, self.actor)
+  #    metrics.update({f'{key}_{k}': v for k, v in mets.items()})
+  #  with tape:
+  #    scores = []
+  #    for key, critic in self.critics.items():
+  #      ret, baseline = critic.score(traj, self.actor)
+  #      ret = self.retnorms[key](ret)
+  #      baseline = self.retnorms[key](baseline, update=False)
+  #      score = self.scorenorms[key](ret - baseline)
+  #      metrics[f'{key}_score_mean'] = score.mean()
+  #      metrics[f'{key}_score_std'] = score.std()
+  #      metrics[f'{key}_score_mag'] = tf.abs(score).mean()
+  #      metrics[f'{key}_score_max'] = tf.abs(score).max()
+  #      scores.append(score * self.scales[key])
+  #    score = self.advnorm(tf.reduce_sum(scores, 0))
+  #    loss, mets = self.loss(traj, score)
+  #    metrics.update(mets)
+  #    loss = loss.mean()
+  #  metrics.update(self.opt(tape, loss, self.actor))
+  #  return metrics
+
+  def update(self, traj):
+    metrics = {}
+    for key, critic in self.critics.items():
+        mets = critic.train(traj, self.actor)
+        metrics.update({f'{key}_{k}': v for k, v in mets.items()})
+    scores = []
+    for key, critic in self.critics.items():
+      ret, baseline = critic.score(traj, self.actor)
+      ret = self.retnorms[key](ret)
+      baseline = self.retnorms[key](baseline, update=False)
+      score = self.scorenorms[key](ret - baseline)
+      metrics[f'{key}_score_mean'] = score.mean()
+      metrics[f'{key}_score_std'] = score.std()
+      metrics[f'{key}_score_mag'] = jnp.abs(score).mean()
+      metrics[f'{key}_score_max'] = jnp.abs(score).max()
+      scores.append(score * self.scales[key])
+    score = self.advnorm(jnp.sum(scores, 0))
+    loss, mets = self.loss(traj, score)
+    metrics.update(mets)
+    grads_fn = jax.grad(lambda actor: self.loss(traj, self.advantage(actor))[0].mean())
+    grads = grads_fn(self.actor)
+
+    metrics.update(self.opt.update(grads))
+    return metrics
 
   def loss(self, traj):
     metrics = {}
