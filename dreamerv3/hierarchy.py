@@ -37,7 +37,7 @@ class Hierarchy(nj.Module):
         'extr': agent.VFunction(lambda s: s['reward_extr'], wconfig, name='wcritic_extr'),
         'expl': agent.VFunction(lambda s: s['reward_expl'], wconfig, name='wcritic_expl'),
         'goal': agent.VFunction(lambda s: s['reward_goal'], wconfig, name='wcritic_goal'),
-    }, config.worker_rews, act_space, wconfig), 
+    }, config.worker_rews, act_space, wconfig, name='worker'), 
 
     mconfig = config.update({
         'actor_grad_cont': 'reinforce',
@@ -47,18 +47,19 @@ class Hierarchy(nj.Module):
         'extr': agent.VFunction(lambda s: s['reward_extr'], mconfig, name='mcritic_extr'),
         'expl': agent.VFunction(lambda s: s['reward_expl'], mconfig, name='mcritic_expl'),
         'goal': agent.VFunction(lambda s: s['reward_goal'], mconfig, name='mcritic_goal'),
-    }, config.manager_rews, self.skill_space, mconfig)
+    }, config.manager_rews, self.skill_space, mconfig, name='manager')
 
     if self.config.expl_rew == 'disag':
       self.expl_reward = expl.Disag(wm, act_space, config)
     elif self.config.expl_rew == 'adver':
-      self.expl_reward = self.elbo_reward
+      #self.expl_reward = self.elbo_reward
+      print('expl_reard setted as elbo_reward')
     else:
       raise NotImplementedError(self.config.expl_rew)
     if config.explorer:
       self.explorer = agent.ImagActorCritic({
           'expl': agent.VFunction(self.expl_reward, config),
-      }, {'expl': 1.0}, act_space, config)
+      }, {'expl': 1.0}, act_space, config, name='explorer')
 
     # VAE manager prior definition
     shape = self.skill_space.shape
@@ -441,7 +442,7 @@ def goal_reward(self, traj):
   else:
     raise NotImplementedError(self.config.goal_reward)
 
-def elbo_reward(self, traj):
+def expl_reward(self, traj):
   feat = self.feat(traj).astype(jnp.float32)
   context = jnp.repeat(feat[0][None], 1 + self.config.imag_horizon, 0)
   enc = self.enc({'goal': feat, 'context': context})

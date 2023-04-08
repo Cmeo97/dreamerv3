@@ -7,6 +7,7 @@ from . import expl
 from . import ninjax as nj
 from . import jaxutils
 
+from .hierarchy import Hierarchy
 
 class Greedy(nj.Module):
 

@@ -22,4 +22,4 @@ python dreamerv3/train.py \
   --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/"${seed}""-"$(date "+%Y%m%d-%H%M%S") \
   --configs ${env} \
   --task ${task} \
-> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+#> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err

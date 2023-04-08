@@ -379,7 +379,7 @@ class ImagActorCritic(nj.Module):
     logpi = policy.log_prob(sg(traj['action']))[:-1]
     loss = {'backprop': -adv, 'reinforce': -logpi * sg(adv)}[self.grad]
     ent = policy.entropy()[:-1]
-    loss -= self.config.actent * ent
+    loss -= self.config.actent.scale * ent
     loss *= sg(traj['weight'])[:-1]
     loss *= self.config.loss_scales.actor
     metrics.update(self._metrics(traj, policy, logpi, ent, adv))
