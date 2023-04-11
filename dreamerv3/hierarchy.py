@@ -7,8 +7,6 @@ import numpy as np
 from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 
-
-
 from . import ninjax as nj
 from . import jaxutils
 from . import agent
