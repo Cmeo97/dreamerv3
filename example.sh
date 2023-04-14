@@ -11,7 +11,9 @@
 
 # 1. Load the required modules
 module load anaconda/3
-conda activate ~/.conda/envs/mamba/envs/ECS
+module load cuda/11.2
+conda activate ~/.conda/envs/tf211-jax044-py310
+#conda activate ~/.conda/envs/mamba/envs/ECS
 #source  ~/.venvs/${conda_env}/bin/activate
 
 env=$1
@@ -22,4 +24,4 @@ python dreamerv3/train.py \
   --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/"${seed}""-"$(date "+%Y%m%d-%H%M%S") \
   --configs ${env} \
   --task ${task} \
-> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+#> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err

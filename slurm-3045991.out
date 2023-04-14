@@ -1,0 +1,166 @@
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                                 : Tue Apr 11 19:15:38 2023
+Driver Version                            : 515.65.01
+CUDA Version                              : 11.7
+
+Attached GPUs                             : 2
+GPU 00000000:88:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 15964
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 15971
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 15977
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 15982
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 15926
+            GPU Utilization               : 92 %
+            Memory Utilization            : 45 %
+            Max memory usage              : 39801 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+GPU 00000000:89:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 15926
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 161 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+Tue Apr 11 19:15:38 2023       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 515.65.01    Driver Version: 515.65.01    CUDA Version: 11.7     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  Quadro RTX 8000     On   | 00000000:88:00.0 Off |                  Off |
+| 37%   62C    P2   229W / 260W |  40071MiB / 49152MiB |     87%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+|   1  Quadro RTX 8000     On   | 00000000:89:00.0 Off |                  Off |
+| 33%   27C    P8    27W / 260W |    164MiB / 49152MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                                  |
+|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
+|        ID   ID                                                   Usage      |
+|=============================================================================|
+|    0   N/A  N/A     15926      C   python                          39801MiB |
+|    0   N/A  N/A     15964      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     15971      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     15977      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     15982      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    1   N/A  N/A     15926      C   python                            161MiB |
++-----------------------------------------------------------------------------+
+[=== Module anaconda/3 loaded ===]
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                                 : Tue Apr 11 20:51:57 2023
+Driver Version                            : 515.65.01
+CUDA Version                              : 11.7
+
+Attached GPUs                             : 2
+GPU 00000000:39:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 4165
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 2734770 ms
+            Is Running                    : 0
+        Process ID                        : 4173
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 2734124 ms
+            Is Running                    : 0
+        Process ID                        : 4177
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 2733456 ms
+            Is Running                    : 0
+        Process ID                        : 4201
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 2732784 ms
+            Is Running                    : 0
+        Process ID                        : 4126
+            GPU Utilization               : 91 %
+            Memory Utilization            : 45 %
+            Max memory usage              : 39801 MiB
+            Time                          : 2735014 ms
+            Is Running                    : 0
+
+GPU 00000000:3A:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 4126
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 161 MiB
+            Time                          : 2734960 ms
+            Is Running                    : 0
+
+Tue Apr 11 20:51:57 2023       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 515.65.01    Driver Version: 515.65.01    CUDA Version: 11.7     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  Quadro RTX 8000     On   | 00000000:39:00.0 Off |                  Off |
+| 35%   56C    P0    70W / 260W |      1MiB / 49152MiB |    100%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+|   1  Quadro RTX 8000     On   | 00000000:3A:00.0 Off |                  Off |
+| 33%   24C    P8     5W / 260W |      1MiB / 49152MiB |      5%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                                  |
+|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
+|        ID   ID                                                   Usage      |
+|=============================================================================|
+|  No running processes found                                                 |
++-----------------------------------------------------------------------------+

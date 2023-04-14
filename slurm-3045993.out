@@ -1,0 +1,174 @@
+[=== Module anaconda/3 loaded ===]
+slurmstepd: error: *** JOB 3045993 ON cn-c013 CANCELLED AT 2023-04-12T11:17:50 DUE TO PREEMPTION ***
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                                 : Wed Apr 12 11:17:50 2023
+Driver Version                            : 515.65.01
+CUDA Version                              : 11.7
+
+Attached GPUs                             : 2
+GPU 00000000:43:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 57376
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 57387
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 57394
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 57398
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 57303
+            GPU Utilization               : 88 %
+            Memory Utilization            : 56 %
+            Max memory usage              : 37363 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+GPU 00000000:A4:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 57303
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 161 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+Wed Apr 12 11:17:50 2023       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 515.65.01    Driver Version: 515.65.01    CUDA Version: 11.7     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  Quadro RTX 8000     On   | 00000000:43:00.0 Off |                    0 |
+| 68%   85C    P2   217W / 260W |  37633MiB / 46080MiB |     92%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+|   1  Quadro RTX 8000     On   | 00000000:A4:00.0 Off |                    0 |
+| 33%   23C    P8    26W / 260W |    164MiB / 46080MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                                  |
+|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
+|        ID   ID                                                   Usage      |
+|=============================================================================|
+|    0   N/A  N/A     57303      C   python                          37363MiB |
+|    0   N/A  N/A     57376      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     57387      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     57394      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     57398      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    1   N/A  N/A     57303      C   python                            161MiB |
++-----------------------------------------------------------------------------+
+[=== Module anaconda/3 loaded ===]
+slurmstepd: error: *** JOB 3045993 ON cn-c018 CANCELLED AT 2023-04-13T10:11:51 DUE TO PREEMPTION ***
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                                 : Thu Apr 13 10:11:51 2023
+Driver Version                            : 515.65.01
+CUDA Version                              : 11.7
+
+Attached GPUs                             : 2
+GPU 00000000:A3:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 44328
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 44337
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 44350
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 44355
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 66 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+        Process ID                        : 44280
+            GPU Utilization               : 85 %
+            Memory Utilization            : 42 %
+            Max memory usage              : 39801 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+GPU 00000000:A4:00.0
+    Accounting Mode                       : Enabled
+    Accounting Mode Buffer Size           : 4000
+    Accounted Processes
+        Process ID                        : 44280
+            GPU Utilization               : 0 %
+            Memory Utilization            : 0 %
+            Max memory usage              : 161 MiB
+            Time                          : 0 ms
+            Is Running                    : 1
+
+Thu Apr 13 10:11:51 2023       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 515.65.01    Driver Version: 515.65.01    CUDA Version: 11.7     |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                               |                      |               MIG M. |
+|===============================+======================+======================|
+|   0  Quadro RTX 8000     On   | 00000000:A3:00.0 Off |                  Off |
+| 33%   48C    P2   235W / 260W |  40071MiB / 49152MiB |     86%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+|   1  Quadro RTX 8000     On   | 00000000:A4:00.0 Off |                  Off |
+| 33%   26C    P8    26W / 260W |    164MiB / 49152MiB |      0%      Default |
+|                               |                      |                  N/A |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                                  |
+|  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
+|        ID   ID                                                   Usage      |
+|=============================================================================|
+|    0   N/A  N/A     44280      C   python                          39801MiB |
+|    0   N/A  N/A     44328      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     44337      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     44350      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    0   N/A  N/A     44355      G   ...mamba/envs/ECS/bin/python       66MiB |
+|    1   N/A  N/A     44280      C   python                            161MiB |
++-----------------------------------------------------------------------------+
