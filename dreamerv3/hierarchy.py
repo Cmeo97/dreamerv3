@@ -1,4 +1,5 @@
 import functools
+import jax
 import jax.numpy as jnp
 from jax import lax, nn, random
 from jax.tree_util import tree_map
@@ -18,6 +19,7 @@ sg = lambda x: tree_map(lax.stop_gradient, x)
 class Hierarchy(nj.Module):
 
   def __init__(self, wm, act_space, config):
+    jax.config.update("jax_transfer_guard", "allow")
     self.wm = wm
     self.config = config
     self.extr_reward = lambda traj: self.wm.heads['reward'](traj).mean()[1:]
@@ -35,7 +37,7 @@ class Hierarchy(nj.Module):
         'extr': agent.VFunction(lambda s: s['reward_extr'], wconfig, name='wcritic_extr'),
         'expl': agent.VFunction(lambda s: s['reward_expl'], wconfig, name='wcritic_expl'),
         'goal': agent.VFunction(lambda s: s['reward_goal'], wconfig, name='wcritic_goal'),
-    }, config.worker_rews, act_space, wconfig, name='worker'), 
+    }, config.worker_rews, act_space, wconfig, name='worker') 
 
     mconfig = config.update({
         'actor_grad_cont': 'reinforce',
@@ -71,11 +73,11 @@ class Hierarchy(nj.Module):
     self.feat = nets.Input(['deter'])
     self.goal_shape = (self.config.rssm.deter,)
     self.enc = nets.MLP(
-        config.skill_shape, dims='context', **config.goal_encoder)
+        config.skill_shape, dims='context', **config.goal_encoder, name='goal_encoder')
     self.dec = nets.MLP(
-        self.goal_shape, dims='context', **self.config.goal_decoder)
+        self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
     self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl)
-    self.opt = jaxutils.Optimizer('goal_opt', **config.encdec_opt)
+    self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
   
 
   def initial(self, batch_size):
@@ -92,7 +94,7 @@ class Hierarchy(nj.Module):
     switch = lambda x, y: (
         jnp.einsum('i,i...->i...', 1 - update.astype(x.dtype), x) +
         jnp.einsum('i,i...->i...', update.astype(x.dtype), y))
-    skill = sg(switch(carry['skill'], self.manager.actor(sg(latent)).sample()))
+    skill = sg(switch(carry['skill'], self.manager.actor(sg(latent)).sample(seed=nj.rng())))
     new_goal = self.dec({'skill': skill, 'context': self.feat(latent)}).mode()
     new_goal = (
         self.feat(latent).astype(jnp.float32) + new_goal
@@ -108,7 +110,7 @@ class Hierarchy(nj.Module):
     carry = {'step': carry['step'] + 1, 'skill': skill, 'goal': goal}
     return outs, carry
 
-def train(self, imagine, start, data):
+  def train(self, imagine, start, data):
     success = lambda rew: (rew[-1] > 0.7).astype(jnp.float32).mean()
     metrics = {}
     #if self.config.expl_rew == 'disag':
@@ -174,7 +176,7 @@ def train(self, imagine, start, data):
 #    return traj, metrics
 
 
-def train_jointly(self, imagine, start):
+  def train_jointly(self, imagine, start):
     start = start.copy()
     metrics = {}
     policy = functools.partial(self.policy, imag=True)
@@ -269,39 +271,39 @@ def train_jointly(self, imagine, start):
 #  metrics.update({f'worker_{k}': v for k, v in mets.items()})
 #  return traj, metrics
 
-def train_vae_replay(self, data):
-  metrics = {}
-  feat = self.feat(data).astype(jnp.float32)
-  if 'context' in self.config.goal_decoder.inputs:
-    if self.config.vae_span:
-      context = feat[:, 0]
-      goal = feat[:, -1]
+  def train_vae_replay(self, data):
+    metrics = {}
+    feat = self.feat(data).astype(jnp.float32)
+    if 'context' in self.config.goal_decoder.inputs:
+      if self.config.vae_span:
+        context = feat[:, 0]
+        goal = feat[:, -1]
+      else:
+        assert feat.shape[1] > self.config.train_skill_duration
+        context = feat[:, :-self.config.train_skill_duration]
+        goal = feat[:, self.config.train_skill_duration:]
     else:
-      assert feat.shape[1] > self.config.train_skill_duration
-      context = feat[:, :-self.config.train_skill_duration]
-      goal = feat[:, self.config.train_skill_duration:]
-  else:
-    goal = context = feat
+      goal = context = feat
+    
+    enc = self.enc({'goal': goal, 'context': context})
+    dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
+    rec = -dec.log_prob(sg(goal))
+    if self.config.goal_kl:
+      kl = tfd.kl_divergence(enc, self.prior)
+      kl, mets = self.kl(kl)
+      metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
+      assert rec.shape == kl.shape, (rec.shape, kl.shape)
+    else:
+      kl = 0.0
 
-  enc = self.enc({'goal': goal, 'context': context})
-  dec = self.dec({'skill': enc.sample(), 'context': context})
-  rec = -dec.log_prob(sg(goal))
-  if self.config.goal_kl:
-    kl = tfd.kl_divergence(enc, self.prior)
-    kl, mets = self.kl(kl)
-    metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
-    assert rec.shape == kl.shape, (rec.shape, kl.shape)
-  else:
-    kl = 0.0
+    loss_ = (rec + kl).mean()
+    def loss(_loss):  
+      return _loss
 
-  loss_ = (rec + kl).mean()
-  def loss(_loss):  
-    return _loss
-  
-  metrics.update(self.opt([self.enc, self.dec], loss, loss_))
-  metrics['goalrec_mean'] = rec.mean()
-  metrics['goalrec_std'] = rec.std()
-  return metrics
+    metrics.update(self.opt([self.enc, self.dec], loss, loss_))
+    metrics['goalrec_mean'] = rec.mean()
+    metrics['goalrec_std'] = rec.std()
+    return metrics
 
 #def train_vae_imag(self, traj):
 #  metrics = {}
@@ -332,226 +334,225 @@ def train_vae_replay(self, data):
 #  metrics['goalrec_std'] = rec.std()
 #  return metrics
 
-def propose_goal(self, start, impl, key):
-  feat = self.feat(start).astype(jnp.float32)
-  if impl == 'replay':
-    target = random.shuffle(key, feat).astype(jnp.float32)
-    skill = self.enc({'goal': target, 'context': feat}).sample()
-    return self.dec({'skill': skill, 'context': feat}).mode()
-  if impl == 'replay_direct':
-    return random.shuffle(key, feat).astype(jnp.float32)
-  if impl == 'manager':
-    skill = self.manager.actor(start).sample()
-    goal = self.dec({'skill': skill, 'context': feat}).mode()
-    goal = feat + goal if self.config.manager_delta else goal
-    return goal
-  if impl == 'prior':
-    skill = self.prior.sample(len(start['is_terminal']))
-    return self.dec({'skill': skill, 'context': feat}).mode()
-  raise NotImplementedError(impl)
+  def propose_goal(self, start, impl):
+    feat = self.feat(start).astype(jnp.float32)
+    if impl == 'replay':
+      target = random.shuffle(nj.rng(), feat).astype(jnp.float32)
+      skill = self.enc({'goal': target, 'context': feat}).sample(seed=nj.rng())
+      return self.dec({'skill': skill, 'context': feat}).mode()
+    if impl == 'replay_direct':
+      return random.shuffle(nj.rng(), feat).astype(jnp.float32)
+    if impl == 'manager':
+      skill = self.manager.actor(start).sample(seed=nj.rng())
+      goal = self.dec({'skill': skill, 'context': feat}).mode()
+      goal = feat + goal if self.config.manager_delta else goal
+      return goal
+    if impl == 'prior':
+      skill = self.prior.sample(sample_shape=len(start['is_terminal']), seed=nj.rng())
+      return self.dec({'skill': skill, 'context': feat}).mode()
+    raise NotImplementedError(impl)
 
-def goal_reward(self, traj):
-  feat = self.feat(traj).astype(jnp.float32)
-  goal = sg(traj['goal'].astype(jnp.float32))
-  skill = sg(traj['skill'].astype(jnp.float32))
-  context = sg(
-      jnp.repeat(feat[0][None], 1 + self.config.imag_horizon, 0))
-  if self.config.goal_reward == 'dot':
-    return jnp.einsum('...i,...i->...', goal, feat)[1:]
-  elif self.config.goal_reward == 'dir':
-    return jnp.einsum(
-        '...i,...i->...', jnp.linalg.norm(goal, ord=2, axis=-1), feat)[1:]
-  elif self.config.goal_reward == 'normed_inner':
-    norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
-    return jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
-  elif self.config.goal_reward == 'normed_squared':
-    norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
-    return -((goal / norm - feat / norm) ** 2).mean(-1)[1:]
-  elif self.config.goal_reward == 'cosine_lower':
-    gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.maximum(gnorm, fnorm)
-    return jnp.einsum('...i,...i->...', goal / gnorm, feat / fnorm)[1:]
-  elif self.config.goal_reward == 'cosine_lower_pos':
-    gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.maximum(gnorm, fnorm)
-    cos = jnp.einsum('...i,...i->...', goal / gnorm, feat / fnorm)[1:]
-    return nn.relu(cos)
-  elif self.config.goal_reward == 'cosine_frac':
-    gnorm = jnp.linalg.norm(goal, axis=-1) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1) + 1e-12
-    goal /= gnorm[..., None]
-    feat /= fnorm[..., None]
-    cos = jnp.einsum('...i,...i->...', goal, feat)
-    mag = jnp.minimum(gnorm, fnorm) / jnp.maximum(gnorm, fnorm)
-    return (cos * mag)[1:]
-  elif self.config.goal_reward == 'cosine_frac_pos':
-    gnorm = jnp.linalg.norm(goal, axis=-1) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1) + 1e-12
-    goal /= gnorm[..., None]
-    feat /= fnorm[..., None]
-    cos = jnp.einsum('...i,...i->...', goal, feat)
-    mag = jnp.minimum(gnorm, fnorm) / jnp.maximum(gnorm, fnorm)
-    return nn.relu(cos * mag)[1:]
-  elif self.config.goal_reward == 'cosine_max':
-    gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
-    norm = jnp.maximum(gnorm, fnorm)
-    return jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
-  elif self.config.goal_reward == 'cosine_max_pos':
-    gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
-    fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
-    norm = jnp.maximum(gnorm, fnorm)
-    cos = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
-    return nn.relu(cos)
-  elif self.config.goal_reward == 'normed_inner_clip':
-    norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
-    cosine = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
-    return jnp.clip(cosine, -1.0, 1.0)
-  elif self.config.goal_reward == 'normed_inner_clip_pos':
-    norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
-    cosine = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
-    return jnp.clip(cosine, 0.0, 1.0)
-  elif self.config.goal_reward == 'diff':
-    goal = jnp.linalg.norm(goal[:-1], ord=2, axis=-1)
-    diff = jnp.concatenate([feat[1:] - feat[:-1]], 0)
-    return jnp.einsum('...i,...i->...', goal, diff)
-  elif self.config.goal_reward == 'norm':
-    return -jnp.linalg.norm(goal - feat, axis=-1)[1:]
-  elif self.config.goal_reward == 'squared':
-    return -((goal - feat) ** 2).sum(-1)[1:]
-  elif self.config.goal_reward == 'epsilon':
-    return ((goal - feat).mean(-1) < 1e-3).astype(jnp.float32)[1:]
-  elif self.config.goal_reward == 'enclogprob':
-    return self.enc({'goal': goal, 'context': context}).log_prob(skill)[1:]
-  elif self.config.goal_reward == 'encprob':
-    return self.enc({'goal': goal, 'context': context}).prob(skill)[1:]
-  elif self.config.goal_reward == 'enc_normed_cos':
-    dist = self.enc({'goal': goal, 'context': context})
-    probs = dist.distribution.probs_parameter()
-    norm = jnp.linalg.norm(probs, axis=[-2, -1], keepdims=True)
-    return jnp.einsum('...ij,...ij->...', probs / norm, skill / norm)[1:]
-  elif self.config.goal_reward == 'enc_normed_squared':
-    dist = self.enc({'goal': goal, 'context': context})
-    probs = dist.distribution.probs_parameter()
-    norm = jnp.linalg.norm(probs, axis=[-2, -1], keepdims=True)
-    return -((probs / norm - skill / norm) ** 2).mean([-2, -1])[1:]
-  else:
-    raise NotImplementedError(self.config.goal_reward)
-
-def expl_reward(self, traj):
-  feat = self.feat(traj).astype(jnp.float32)
-  context = jnp.repeat(feat[0][None], 1 + self.config.imag_horizon, 0)
-  enc = self.enc({'goal': feat, 'context': context})
-  dec = self.dec({'skill': enc.sample(), 'context': context})
-  ll = dec.log_prob(feat)
-  kl = tfd.kl_divergence(enc, self.prior)
-  if self.config.adver_impl == 'abs':
-    return jnp.abs(dec.mode() - feat).mean(-1)[1:]
-  elif self.config.adver_impl == 'squared':
-    return ((dec.mode() - feat) ** 2).mean(-1)[1:]
-  elif self.config.adver_impl == 'elbo_scaled':
-    return (kl - ll / self.kl.scale())[1:]
-  elif self.config.adver_impl == 'elbo_unscaled':
-    return (kl - ll)[1:]
-  raise NotImplementedError(self.config.adver_impl)
-
-def split_traj(self, traj):
-  traj = traj.copy()
-  k = self.config.train_skill_duration
-  assert len(traj['action']) % k == 1
-  reshape = lambda x: x.reshape([x.shape[0] // k, k] + x.shape[1:])
-  for key, val in list(traj.items()):
-    val = jnp.concatenate([0 * val[:1], val], 0) if 'reward' in key else val
-    # (1 2 3 4 5 6 7 8 9 10) -> ((1 2 3 4) (4 5 6 7) (7 8 9 10))
-    val = jnp.concatenate([reshape(val[:-1]), val[k::k][:, None]], 1)
-    # N val K val B val F... -> K val (N B) val F...
-    val = val.transpose([1, 0] + list(range(2, len(val.shape))))
-    val = val.reshape(
-        [val.shape[0], np.prod(val.shape[1:3])] + val.shape[3:])
-    val = val[1:] if 'reward' in key else val
-    traj[key] = val
-  # Bootstrap sub trajectory against current not next goal.
-  traj['goal'] = jnp.concatenate([traj['goal'][:-1], traj['goal'][:1]], 0)
-  traj['weight'] = jnp.cumprod(
-      self.config.discount * traj['cont']) / self.config.discount
-  return traj
-
-def abstract_traj(self, traj):
-  traj = traj.copy()
-  traj['action'] = traj.pop('skill')
-  k = self.config.train_skill_duration
-  reshape = lambda x: x.reshape([x.shape[0] // k, k] + x.shape[1:])
-  weights = jnp.cumprod(reshape(traj['cont'][:-1]), 1)
-  for key, value in list(traj.items()):
-    if 'reward' in key:
-      traj[key] = (reshape(value) * weights).mean(1)
-    elif key == 'cont':
-      traj[key] = jnp.concatenate([value[:1], reshape(value[1:]).prod(1)], 0)
+  def goal_reward(self, traj):
+    feat = self.feat(traj).astype(jnp.float32)
+    goal = sg(traj['goal'].astype(jnp.float32))
+    skill = sg(traj['skill'].astype(jnp.float32))
+    context = sg(
+        jnp.repeat(feat[0][None], 1 + self.config.imag_horizon, 0))
+    if self.config.goal_reward == 'dot':
+      return jnp.einsum('...i,...i->...', goal, feat)[1:]
+    elif self.config.goal_reward == 'dir':
+      return jnp.einsum(
+          '...i,...i->...', jnp.linalg.norm(goal, ord=2, axis=-1), feat)[1:]
+    elif self.config.goal_reward == 'normed_inner':
+      norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
+      return jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
+    elif self.config.goal_reward == 'normed_squared':
+      norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
+      return -((goal / norm - feat / norm) ** 2).mean(-1)[1:]
+    elif self.config.goal_reward == 'cosine_lower':
+      gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.maximum(gnorm, fnorm)
+      return jnp.einsum('...i,...i->...', goal / gnorm, feat / fnorm)[1:]
+    elif self.config.goal_reward == 'cosine_lower_pos':
+      gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.maximum(gnorm, fnorm)
+      cos = jnp.einsum('...i,...i->...', goal / gnorm, feat / fnorm)[1:]
+      return nn.relu(cos)
+    elif self.config.goal_reward == 'cosine_frac':
+      gnorm = jnp.linalg.norm(goal, axis=-1) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1) + 1e-12
+      goal /= gnorm[..., None]
+      feat /= fnorm[..., None]
+      cos = jnp.einsum('...i,...i->...', goal, feat)
+      mag = jnp.minimum(gnorm, fnorm) / jnp.maximum(gnorm, fnorm)
+      return (cos * mag)[1:]
+    elif self.config.goal_reward == 'cosine_frac_pos':
+      gnorm = jnp.linalg.norm(goal, axis=-1) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1) + 1e-12
+      goal /= gnorm[..., None]
+      feat /= fnorm[..., None]
+      cos = jnp.einsum('...i,...i->...', goal, feat)
+      mag = jnp.minimum(gnorm, fnorm) / jnp.maximum(gnorm, fnorm)
+      return nn.relu(cos * mag)[1:]
+    elif self.config.goal_reward == 'cosine_max':
+      gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
+      norm = jnp.maximum(gnorm, fnorm)
+      return jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
+    elif self.config.goal_reward == 'cosine_max_pos':
+      gnorm = jnp.linalg.norm(goal, axis=-1, keepdims=True) + 1e-12
+      fnorm = jnp.linalg.norm(feat, axis=-1, keepdims=True) + 1e-12
+      norm = jnp.maximum(gnorm, fnorm)
+      cos = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
+      return nn.relu(cos)
+    elif self.config.goal_reward == 'normed_inner_clip':
+      norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
+      cosine = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
+      return jnp.clip(cosine, -1.0, 1.0)
+    elif self.config.goal_reward == 'normed_inner_clip_pos':
+      norm = jnp.linalg.norm(goal, axis=-1, keepdims=True)
+      cosine = jnp.einsum('...i,...i->...', goal / norm, feat / norm)[1:]
+      return jnp.clip(cosine, 0.0, 1.0)
+    elif self.config.goal_reward == 'diff':
+      goal = jnp.linalg.norm(goal[:-1], ord=2, axis=-1)
+      diff = jnp.concatenate([feat[1:] - feat[:-1]], 0)
+      return jnp.einsum('...i,...i->...', goal, diff)
+    elif self.config.goal_reward == 'norm':
+      return -jnp.linalg.norm(goal - feat, axis=-1)[1:]
+    elif self.config.goal_reward == 'squared':
+      return -((goal - feat) ** 2).sum(-1)[1:]
+    elif self.config.goal_reward == 'epsilon':
+      return ((goal - feat).mean(-1) < 1e-3).astype(jnp.float32)[1:]
+    elif self.config.goal_reward == 'enclogprob':
+      return self.enc({'goal': goal, 'context': context}).log_prob(skill)[1:]
+    elif self.config.goal_reward == 'encprob':
+      return self.enc({'goal': goal, 'context': context}).prob(skill)[1:]
+    elif self.config.goal_reward == 'enc_normed_cos':
+      dist = self.enc({'goal': goal, 'context': context})
+      probs = dist.distribution.probs_parameter()
+      norm = jnp.linalg.norm(probs, axis=[-2, -1], keepdims=True)
+      return jnp.einsum('...ij,...ij->...', probs / norm, skill / norm)[1:]
+    elif self.config.goal_reward == 'enc_normed_squared':
+      dist = self.enc({'goal': goal, 'context': context})
+      probs = dist.distribution.probs_parameter()
+      norm = jnp.linalg.norm(probs, axis=[-2, -1], keepdims=True)
+      return -((probs / norm - skill / norm) ** 2).mean([-2, -1])[1:]
     else:
-      traj[key] = jnp.concatenate([reshape(value[:-1])[:, 0], value[-1:]], 0)
-  traj['weight'] = jnp.cumprod(
-      self.config.discount * traj['cont']) / self.config.discount
-  return traj
+      raise NotImplementedError(self.config.goal_reward)
 
-#def abstract_traj_old(self, traj):
-#  traj = traj.copy()
-#  traj['action'] = traj.pop('skill')
-#  mult = tf.math.cumprod(traj['cont'][1:], 0)
-#  for key, value in list(traj.items()):
-#    if 'reward' in key:
-#      traj[key] = (mult * value).mean(0)[None]
-#    elif key == 'cont':
-#      traj[key] = tf.stack([value[0], value[1:].prod(0)], 0)
-#    else:
-#      traj[key] = tf.stack([value[0], value[-1]], 0)
-#  return traj
+  def expl_reward(self, traj):
+    feat = self.feat(traj).astype(jnp.float32)
+    context = jnp.repeat(feat[0][None], 1 + self.config.imag_horizon, 0)
+    enc = self.enc({'goal': feat, 'context': context})
+    dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
+    ll = dec.log_prob(feat)
+    kl = tfd.kl_divergence(enc, self.prior)
+    if self.config.adver_impl == 'abs':
+      return jnp.abs(dec.mode() - feat).mean(-1)[1:]
+    elif self.config.adver_impl == 'squared':
+      return ((dec.mode() - feat) ** 2).mean(-1)[1:]
+    elif self.config.adver_impl == 'elbo_scaled':
+      return (kl - ll / self.kl.scale())[1:]
+    elif self.config.adver_impl == 'elbo_unscaled':
+      return (kl - ll)[1:]
+    raise NotImplementedError(self.config.adver_impl)
 
-def report(self, data):
-  metrics = {}
-  new_key = random.PRNGKey(42)
-  for impl in ('manager', 'prior', 'replay'):
-    rkey = new_key
-    del new_key
-    for key, video in self.report_worker(data, impl, rkey).items():
-      metrics[f'impl_{impl}_{key}'] = video
-    #Generate new random key for worker
-    new_key, subkey = random.split(rkey)
-    del subkey
-  return metrics
+  def split_traj(self, traj):
+    traj = traj.copy()
+    k = self.config.train_skill_duration
+    assert len(traj['action']) % k == 1
+    reshape = lambda x: x.reshape((x.shape[0] // k, k) + x.shape[1:])
+    for key, val in list(traj.items()):
+      val = jnp.concatenate([0 * val[:1], val], 0) if 'reward' in key else val
+      # (1 2 3 4 5 6 7 8 9 10) -> ((1 2 3 4) (4 5 6 7) (7 8 9 10))
+      val = jnp.concatenate([reshape(val[:-1]), val[k::k][:, None]], 1)
+      # N val K val B val F... -> K val (N B) val F...
+      val = val.transpose([1, 0] + list(range(2, len(val.shape))))
+      val = val.reshape(
+          (val.shape[0], np.prod(val.shape[1:3])) + val.shape[3:])
+      val = val[1:] if 'reward' in key else val
+      traj[key] = val
+    # Bootstrap sub trajectory against current not next goal.
+    traj['goal'] = jnp.concatenate([traj['goal'][:-1], traj['goal'][:1]], 0)
+    traj['weight'] = jnp.cumprod(
+        self.config.discount * traj['cont'], axis=0) / self.config.discount
+    return traj
 
-def report_worker(self, data, impl, rkey):
+  def abstract_traj(self, traj):
+    traj = traj.copy()
+    traj['action'] = traj.pop('skill')
+    k = self.config.train_skill_duration
+    reshape = lambda x: x.reshape((x.shape[0] // k, k) + x.shape[1:])
+    weights = jnp.cumprod(reshape(traj['cont'][:-1]), axis=1)
+    for key, value in list(traj.items()):
+      if 'reward' in key:
+        traj[key] = (reshape(value) * weights).mean(1)
+      elif key == 'cont':
+        traj[key] = jnp.concatenate([value[:1], reshape(value[1:]).prod(1)], 0)
+      else:
+        traj[key] = jnp.concatenate([reshape(value[:-1])[:, 0], value[-1:]], 0)
+    traj['weight'] = jnp.cumprod(
+        self.config.discount * traj['cont'], axis=0) / self.config.discount
+    return traj
 
-  # Prepare initial state.
-  decoder = self.wm.heads['decoder']
-  states, _ = self.wm.rssm.observe(
-      self.wm.encoder(data)[:6], data['action'][:6], data['is_first'][:6])
-  start = {k: v[:, 4] for k, v in states.items()}
-  start['is_terminal'] = data['is_terminal'][:6, 4]
-  goal = self.propose_goal(start, impl, rkey)
-  # Worker rollout.
-  worker = lambda s: self.worker.actor({
-      **s, 'goal': goal, 'delta': goal - self.feat(s).astype(jnp.float32),
-  }).sample()
-  traj = self.wm.imagine(
-      worker, start, self.config.worker_report_horizon)
-  # Decoder into images.
-  initial = decoder(start)
-  target = decoder({'deter': goal, 'stoch': self.wm.rssm.get_stoch(goal)})
-  rollout = decoder(traj)
-  # Stich together into videos.
-  videos = {}
-  for k in rollout.keys():
-    if k not in decoder.cnn_shapes:
-      continue
-    length = 1 + self.config.worker_report_horizon
-    rows = []
-    rows.append(jnp.repeat(initial[k].mode()[:, None], length, 1))
-    if target is not None:
-      rows.append(jnp.repeat(target[k].mode()[:, None], length, 1))
-    rows.append(rollout[k].mode().transpose((1, 0, 2, 3, 4)))
-    videos[k] = jaxutils.video_grid(jnp.concatenate(rows, 2))
-  return videos
+  #def abstract_traj_old(self, traj):
+  #  traj = traj.copy()
+  #  traj['action'] = traj.pop('skill')
+  #  mult = tf.math.cumprod(traj['cont'][1:], 0)
+  #  for key, value in list(traj.items()):
+  #    if 'reward' in key:
+  #      traj[key] = (mult * value).mean(0)[None]
+  #    elif key == 'cont':
+  #      traj[key] = tf.stack([value[0], value[1:].prod(0)], 0)
+  #    else:
+  #      traj[key] = tf.stack([value[0], value[-1]], 0)
+  #  return traj
 
-      
+  def report(self, data):
+    metrics = {}
+    for impl in ('manager', 'prior', 'replay'):
+      rkey = key
+      del key
+      for key, video in self.report_worker(data, impl, rkey).items():
+        metrics[f'impl_{impl}_{key}'] = video
+      #Generate new random key for worker
+      key, subkey = random.split(rkey)
+      del subkey
+    return metrics
+
+  def report_worker(self, data, impl):
+
+    # Prepare initial state.
+    decoder = self.wm.heads['decoder']
+    states, _ = self.wm.rssm.observe(
+        self.wm.encoder(data)[:6], data['action'][:6], data['is_first'][:6])
+    start = {k: v[:, 4] for k, v in states.items()}
+    start['is_terminal'] = data['is_terminal'][:6, 4]
+    goal = self.propose_goal(start, impl)
+    # Worker rollout.
+    worker = lambda s: self.worker.actor({
+        **s, 'goal': goal, 'delta': goal - self.feat(s).astype(jnp.float32),
+    }).sample(seed=nj.rng())
+    traj = self.wm.imagine(
+        worker, start, self.config.worker_report_horizon)
+    # Decoder into images.
+    initial = decoder(start)
+    target = decoder({'deter': goal, 'stoch': self.wm.rssm.get_stoch(goal)})
+    rollout = decoder(traj)
+    # Stich together into videos.
+    videos = {}
+    for k in rollout.keys():
+      if k not in decoder.cnn_shapes:
+        continue
+      length = 1 + self.config.worker_report_horizon
+      rows = []
+      rows.append(jnp.repeat(initial[k].mode()[:, None], length, 1))
+      if target is not None:
+        rows.append(jnp.repeat(target[k].mode()[:, None], length, 1))
+      rows.append(rollout[k].mode().transpose((1, 0, 2, 3, 4)))
+      videos[k] = jaxutils.video_grid(jnp.concatenate(rows, 2))
+    return videos
+
+

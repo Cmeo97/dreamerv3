@@ -4,7 +4,6 @@ import embodied
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from . import jaxutils
 from . import ninjax as nj
 

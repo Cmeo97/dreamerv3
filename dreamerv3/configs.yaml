@@ -18,8 +18,8 @@ defaults:
     debug_nans: False
     logical_cpus: 0
     debug: False
-    policy_devices: [0]
-    train_devices: [0]
+    policy_devices: [0,1]
+    train_devices: [0,1]
     metrics_every: 10
 
   run:
@@ -84,8 +84,10 @@ defaults:
   actor_grad_disc: reinforce
   actor_grad_cont: backprop
   critic_type: vfunction
-  imag_horizon: 15
+  imag_horizon: 16
   imag_unroll: False
+  imag_discount: 0.99
+  discount: 0.99
   horizon: 333
   actent: {impl: mult, scale: 3e-4, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
   actent_norm: True

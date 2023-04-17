@@ -1,6 +1,7 @@
 import re
 
 import jax
+jax.config.update("jax_transfer_guard", "allow")
 import jax.numpy as jnp
 import numpy as np
 from tensorflow_probability.substrates import jax as tfp

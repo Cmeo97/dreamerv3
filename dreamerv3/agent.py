@@ -1,5 +1,6 @@
 import embodied
 import jax
+jax.config.update("jax_transfer_guard", "allow")
 import jax.numpy as jnp
 import ruamel.yaml as yaml
 tree_map = jax.tree_util.tree_map
@@ -206,7 +207,7 @@ class WorldModel(nj.Module):
     outs, carry = policy(start, carry)
     action = outs['action']
     if hasattr(action, 'sample'):
-      action = action.sample()
+      action = action.sample(seed=nj.rng())
     actions = [action]
     carries = [carry]
     for _ in range(horizon):
@@ -214,7 +215,7 @@ class WorldModel(nj.Module):
       outs, carry = policy(states[-1], carry)
       action = outs['action']
       if hasattr(action, 'sample'):
-        action = action.sample()
+        action = action.sample(seed=nj.rng())
       actions.append(action)
       carries.append(carry)
     transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
@@ -224,7 +225,7 @@ class WorldModel(nj.Module):
     cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
     traj['cont'] = cont
     traj['weight'] = jnp.cumprod(
-        self.config.imag_discount * cont) / self.config.imag_discount
+        self.config.imag_discount * cont, axis=0) / self.config.imag_discount
     return traj
 
   def report(self, data):

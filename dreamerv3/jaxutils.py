@@ -1,5 +1,7 @@
 import re
+import jax
 from jax import nn, lax
+jax.config.update("jax_transfer_guard", "allow")
 import jax
 import jax.numpy as jnp
 import numpy as np
