@@ -18,10 +18,12 @@ conda activate ~/.conda/envs/tf211-jax044-py310
 
 env=$1
 task=$2
-seed=$4
+seed=$3
+
+echo 'Running experimnet - env: ' ${env}, 'task: ' ${task}, 'seed: ' ${seed}
 
 python dreamerv3/train.py \
-  --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/"${seed}""-"$(date "+%Y%m%d-%H%M%S") \
+  --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/${seed} \
   --configs ${env} \
   --task ${task} \
-#> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
