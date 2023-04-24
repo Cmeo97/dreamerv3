@@ -23,7 +23,7 @@ seed=$3
 echo 'Running experimnet - env: ' ${env}, 'task: ' ${task}, 'seed: ' ${seed}
 
 python dreamerv3/train.py \
-  --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/${seed} \
+  --logdir ~/scratch/dreamerv3/logdir_2/${env}/${task}/${seed} \
   --configs ${env} \
   --task ${task} \
-> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+#> logs_training/dreamer_training_"${task}""-"${seed}""$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"${seed}""$(date +%Y%m%d-%H%M%S).err
