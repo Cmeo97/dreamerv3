@@ -76,9 +76,9 @@ class Hierarchy(nj.Module):
         config.skill_shape, dims='context', **config.goal_encoder, name='goal_encoder')
     self.dec = nets.MLP(
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
-    self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl)
+    self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt')
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
-  
+    self.kl_scale = 0.0
 
   def initial(self, batch_size):
     return {
@@ -290,7 +290,7 @@ class Hierarchy(nj.Module):
     rec = -dec.log_prob(sg(goal))
     if self.config.goal_kl:
       kl = tfd.kl_divergence(enc, self.prior)
-      kl, mets = self.kl(kl)
+      kl, mets, self.kl_scale = self.kl(kl, self.kl_scale)
       metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
       assert rec.shape == kl.shape, (rec.shape, kl.shape)
     else:

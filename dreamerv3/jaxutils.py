@@ -1,5 +1,6 @@
 import re
 import jax
+jax.checking_leaks = True
 from jax import nn, lax
 jax.config.update("jax_transfer_guard", "allow")
 import jax
@@ -7,14 +8,13 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from tensorflow_probability.substrates import jax as tfp
-
+from jax.numpy import clip
 from . import ninjax as nj
 
 tfd = tfp.distributions
 tree_map = jax.tree_util.tree_map
-sg = lambda x: tree_map(jax.lax.stop_gradient, x)
 COMPUTE_DTYPE = jnp.float32
-
+sg = lambda x: tree_map(jax.lax.stop_gradient, x)
 
 def cast_to_compute(values):
   return tree_map(lambda x: x.astype(COMPUTE_DTYPE), values)
@@ -86,6 +86,7 @@ class OneHotDist(tfd.OneHotCategorical):
      return super()._parameter_properties(dtype)
 
   def sample(self, sample_shape=(), seed=None):
+    
     sample = sg(super().sample(sample_shape, seed))
     probs = self._pad(super().probs_parameter(), sample.shape)
     return sg(sample) + (probs - sg(probs)).astype(sample.dtype)
@@ -279,6 +280,7 @@ class Moments(nj.Module):
       min_ = jnp.min
       max_ = jnp.max
       per = jnp.percentile
+    
     x = sg(x.astype(jnp.float32))
     m = self.decay
     if self.impl == 'off':
@@ -310,6 +312,7 @@ class Moments(nj.Module):
       raise NotImplementedError(self.impl)
 
   def stats(self):
+    
     if self.impl == 'off':
       return 0.0, 1.0
     elif self.impl == 'mean_std':
@@ -385,6 +388,7 @@ class Optimizer(nj.Module):
 
   def __call__(self, modules, lossfn, *args, has_aux=False, **kwargs):
     def wrapped(*args, **kwargs):
+      
       outs = lossfn(*args, **kwargs)
       loss, aux = outs if has_aux else (outs, None)
       assert loss.dtype == jnp.float32, (self.name, loss.dtype)
@@ -486,11 +490,9 @@ class SlowUpdater:
 
 
 ## Generated using ChatGPT, translated from TF to JAX/Flax, original version in Director
-class AutoAdapt:
-
-    def __init__(
-            self, shape, impl, scale, target, min, max,
-            vel=0.1, thres=0.1, inverse=False):
+class AutoAdapt(nj.Module):
+    
+    def __init__(self, shape, impl, scale, target, min, max, vel=0.1, thres=0.1, inverse=False):
         self._shape = shape
         self._impl = impl
         self._target = target
@@ -499,55 +501,103 @@ class AutoAdapt:
         self._vel = vel
         self._inverse = inverse
         self._thres = thres
-        if self._impl == 'fixed':
-            self._scale = scale
-        elif self._impl == 'mult':
-            self._scale = jnp.ones(shape)
-        elif self._impl == 'prop':
-            self._scale = jnp.ones(shape)
-        else:
-            raise NotImplementedError(self._impl)
+        self._scale = scale
 
-    def __call__(self, reg, update=True):
-        update and self.update(reg)
-        scale = self.scale()
-        loss = scale * (-reg if self._inverse else reg)
-        metrics = {
-            'mean': reg.mean(), 'std': reg.std(),
-            'scale_mean': scale.mean(), 'scale_std': scale.std()}
-        return loss, metrics
+    def __call__(self, reg, _scale, update=True):
+      def update_mult(reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
+        avg = reg.mean(list(range(len(reg.shape) - len(_shape))))
+        below = avg < (1 / (1 + _thres)) * _target
+        above = avg > (1 + _thres) * _target
+        if _inverse:
+          below, above = above, below
+        inside = ~(below | above)
 
-    def scale(self):
-        if self._impl == 'fixed':
-            scale = self._scale
-        elif self._impl == 'mult':
-            scale = self._scale
-        elif self._impl == 'prop':
-            scale = self._scale
-        else:
-            raise NotImplementedError(self._impl)
-        return sg(scale)
+        #adjusted = (
+        #    lax.convert_element_type(above, reg.dtype) * _scale * (1 + _vel) +
+        #    lax.convert_element_type(below, reg.dtype) * _scale / (1 + _vel) +
+        #    lax.convert_element_type(inside, reg.dtype) * _scale)
 
-    def update(self, reg):
-        avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
-        if self._impl == 'fixed':
-            pass
-        elif self._impl == 'mult':
-            below = avg < (1 / (1 + self._thres)) * self._target
-            above = avg > (1 + self._thres) * self._target
-            if self._inverse:
-                below, above = above, below
-            inside = ~(below | above)
-            adjusted = (
-                above.astype(reg.dtype) * self._scale * (1 + self._vel) +
-                below.astype(reg.dtype) * self._scale / (1 + self._vel) +
-                inside.astype(reg.dtype) * self._scale)
-            self._scale = lax.clamp(self._min, adjusted, self._max)
-        elif self._impl == 'prop':
-            direction = avg - self._target
-            if self._inverse:
-                direction = -direction
-            self._scale = lax.clamp(
-                self._min, self._scale + self._vel * direction, self._max)
-        else:
-            raise NotImplementedError(self._impl)
+        def above_(x, vel):
+          return x * (1 + vel)
+        def below_(x, vel):
+          return x / (1 + vel)
+        def identity(x):
+          return x
+    
+
+        adjusted = jnp.where(above, above_(_scale, _vel), jnp.where(below, below_(_scale, _vel), identity(_scale)))
+
+        _scale = clip(adjusted, a_min=_min, a_max=_max)
+
+        return _scale
+      
+      def update_prop(reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
+          avg = reg.mean(list(range(len(reg.shape) - len(_shape))))
+          direction = avg - _target
+          if _inverse:
+              direction = -direction
+          _scale = lax.clamp(_min, _scale + _vel * direction, _max)
+          return _scale
+    
+      if update:
+         if self._impl == 'mult':
+          _scale = sg(update_mult(reg, self._shape, self._target, self._thres, self._vel, _scale, self._min, self._max, self._inverse))
+         elif self._impl == 'prop': 
+          _scale = sg(update_prop(reg, self._shape, self._target, self._thres, self._vel, _scale, self._min, self._max, self._inverse))
+    
+      loss = _scale * (-reg if self._inverse else reg)
+      metrics = {
+          'mean': reg.mean(), 'std': reg.std(),
+          'scale_mean': _scale.mean(), 'scale_std': _scale.std()}
+      
+      return loss, metrics, _scale
+
+    #def scale(self):
+    #    if self._impl == 'fixed':
+    #        scale = self._scale
+    #    elif self._impl == 'mult':
+    #        scale = self._scale
+    #    elif self._impl == 'prop':
+    #        scale = self._scale
+    #      
+    #    else:
+    #        raise NotImplementedError(self._impl)
+    #    return sg(scale)
+
+    #def update(self, reg):
+    #    avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
+    #    if self._impl == 'fixed':
+    #        pass
+    #    elif self._impl == 'mult':
+    #        below = avg < (1 / (1 + self._thres)) * self._target
+    #        above = avg > (1 + self._thres) * self._target
+    #        if self._inverse:
+    #            below, above = above, below
+    #        inside = ~(below | above)
+    #       
+    #        adjusted = (
+    #            lax.convert_element_type(above, reg.dtype) * self._scale * (1 + self._vel) +
+    #            lax.convert_element_type(below, reg.dtype) * self._scale / (1 + self._vel) +
+    #            inside.astype(reg.dtype) * self._scale)
+    #       
+    #        below_min = self._min > adjusted
+    #        above_max = adjusted > self._max 
+    #        inside_ = ~(below_min | above_max)
+#
+    #        self._scale = (
+    #            lax.convert_element_type(below_min, reg.dtype)* self._min +
+    #            lax.convert_element_type(above_max, reg.dtype) * self._max + 
+    #            inside_.astype(reg.dtype) * adjusted
+    #        )
+#
+    #    elif self._impl == 'prop':
+    #        direction = avg - self._target
+    #        if self._inverse:
+    #            direction = -direction
+    #        self._scale__ = jax.numpy.copy(self._scale)    
+    #        self._scale__ = lax.clamp(
+    #            self._min, self._scale_ + self._vel * direction, self._max)
+    #    else:
+    #        raise NotImplementedError(self._impl)
+
+  
