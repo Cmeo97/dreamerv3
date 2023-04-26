@@ -45,6 +45,7 @@ class JAXAgent(embodied.Agent):
     self._should_metrics = embodied.when.Every(self.config.metrics_every)
     self._transform()
     self.varibs = self._init_varibs(obs_space, act_space)
+    print(self.varibs.keys())
     self.sync()
 
   def policy(self, obs, state=None, mode='train'):
@@ -225,10 +226,10 @@ class JAXAgent(embodied.Agent):
     data = self._convert_inps(data, self.train_devices)
     state, varibs = self._init_train(varibs, rng, data['is_first'])
     varibs = self._train(varibs, rng, data, state, init_only=True)
-    # obs = self._dummy_batch(obs_space, (1,))
-    # state, varibs = self._init_policy(varibs, rng, obs['is_first'])
-    # varibs = self._policy(
-    #     varibs, rng, obs, state, mode='train', init_only=True)
+    obs = self._dummy_batch(obs_space, (1,))
+    state, varibs = self._init_policy(varibs, rng, obs['is_first'])
+    varibs = self._policy(
+         varibs, rng, obs, state, mode='train', init_only=True)
     return varibs
 
   def _dummy_batch(self, spaces, batch_dims):

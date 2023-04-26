@@ -501,37 +501,27 @@ class AutoAdapt(nj.Module):
         self._vel = vel
         self._inverse = inverse
         self._thres = thres
-        self._scale = scale
+        self._scale =  scale
+        
+      
 
-    def __call__(self, reg, _scale, update=True):
-      def update_mult(reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
-        avg = reg.mean(list(range(len(reg.shape) - len(_shape))))
-        below = avg < (1 / (1 + _thres)) * _target
-        above = avg > (1 + _thres) * _target
-        if _inverse:
+    def update_mult(self, reg, _scale):
+        avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
+        below = avg < (1 / (1 + self._thres)) * self._target
+        above = avg > (1 + self._thres) * self._target
+        if self._inverse:
           below, above = above, below
-        inside = ~(below | above)
+       
+        adjusted = jnp.where(above, _scale * (1 + self._vel), jnp.where(below,  _scale / (1 + self._vel), _scale))
 
-        #adjusted = (
-        #    lax.convert_element_type(above, reg.dtype) * _scale * (1 + _vel) +
-        #    lax.convert_element_type(below, reg.dtype) * _scale / (1 + _vel) +
-        #    lax.convert_element_type(inside, reg.dtype) * _scale)
+        below_min = self._min > adjusted
+        above_max = adjusted > self._max 
 
-        def above_(x, vel):
-          return x * (1 + vel)
-        def below_(x, vel):
-          return x / (1 + vel)
-        def identity(x):
-          return x
-    
-
-        adjusted = jnp.where(above, above_(_scale, _vel), jnp.where(below, below_(_scale, _vel), identity(_scale)))
-
-        _scale = clip(adjusted, a_min=_min, a_max=_max)
+        _scale = jnp.where(above_max, self._max , jnp.where(below_min, self._min, adjusted))
 
         return _scale
       
-      def update_prop(reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
+    def update_prop(self, reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
           avg = reg.mean(list(range(len(reg.shape) - len(_shape))))
           direction = avg - _target
           if _inverse:
@@ -539,13 +529,16 @@ class AutoAdapt(nj.Module):
           _scale = lax.clamp(_min, _scale + _vel * direction, _max)
           return _scale
     
+    def __call__(self, reg, _scale, update=True):
+       #.kl_scale['value']
+      #_scale = self.get('_scale', lambda x: x, self._scale)
       if update:
          if self._impl == 'mult':
-          _scale = sg(update_mult(reg, self._shape, self._target, self._thres, self._vel, _scale, self._min, self._max, self._inverse))
+          _scale = self.update_mult(reg, _scale)
          elif self._impl == 'prop': 
-          _scale = sg(update_prop(reg, self._shape, self._target, self._thres, self._vel, _scale, self._min, self._max, self._inverse))
-    
-      loss = _scale * (-reg if self._inverse else reg)
+          _scale = self.update_prop(reg, self._shape, self._target, self._thres, self._vel, _scale, self._min, self._max, self._inverse)
+      #self.put('_scale', _scale)
+      loss = sg(_scale) * (-reg if self._inverse else reg)
       metrics = {
           'mean': reg.mean(), 'std': reg.std(),
           'scale_mean': _scale.mean(), 'scale_std': _scale.std()}

@@ -39,6 +39,7 @@ class Agent(nj.Module):
     else:
       self.expl_behavior = getattr(behaviors, config.expl_behavior)(
           self.wm, self.act_space, self.config, name='expl_behavior')
+    
 
   def policy_initial(self, batch_size):
     return (
@@ -136,6 +137,8 @@ class WorldModel(nj.Module):
     scales.update({k: image for k in self.heads['decoder'].cnn_shapes})
     scales.update({k: vector for k in self.heads['decoder'].mlp_shapes})
     self.scales = scales
+    self.feat = nets.Input(['deter'])
+    self.extr_reward = lambda traj: self.heads['reward'](traj).mean()[1:]
 
   def initial(self, batch_size):
     prev_latent = self.rssm.initial(batch_size)
@@ -226,6 +229,7 @@ class WorldModel(nj.Module):
     traj['cont'] = cont
     traj['weight'] = jnp.cumprod(
         self.config.imag_discount * cont, axis=0) / self.config.imag_discount
+    traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
     return traj
 
   def report(self, data):
@@ -289,7 +293,7 @@ class ImagActorCritic(nj.Module):
     self.scorenorms = {
         k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
         for k in critics}
-    self.opt = jaxutils.Optimizer(name='actor_opt', **config.actor_opt)
+    self.opt = jaxutils.Optimizer(name=f'{self.name}_actor_opt', **config.actor_opt)
 
   def initial(self, batch_size):
     return {}
@@ -413,7 +417,7 @@ class VFunction(nj.Module):
         self.net, self.slow,
         self.config.slow_critic_fraction,
         self.config.slow_critic_update)
-    self.opt = jaxutils.Optimizer(name='critic_opt', **self.config.critic_opt)
+    self.opt = jaxutils.Optimizer(name=f'{self.name}_critic_opt', **self.config.critic_opt)
 
   def train(self, traj, actor):
     target = sg(self.score(traj)[1])

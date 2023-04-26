@@ -77,8 +77,10 @@ class Hierarchy(nj.Module):
     self.dec = nets.MLP(
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
     self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt')
+    self.kl_scale = {'value': 0.0}
+    #self.pure_update_kl = nj.pure(self.update_kl, nested=True)
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
-    self.kl_scale = 0.0
+  
 
   def initial(self, batch_size):
     return {
@@ -179,34 +181,46 @@ class Hierarchy(nj.Module):
   def train_jointly(self, imagine, start):
     start = start.copy()
     metrics = {}
-    policy = functools.partial(self.policy, imag=True)
-    traj = self.wm.imagine_carry(
+    
+    #traj['reward_extr'] = self.extr_reward(traj)
+    #traj['reward_expl'] = self.expl_reward(traj)
+    #traj['reward_goal'] = self.goal_reward(traj)
+    #traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
+    def wloss(start):
+      policy = functools.partial(self.policy, imag=True)
+      traj = self.wm.imagine_carry(
         policy, start, self.config.imag_horizon,
           self.initial(len(start['is_first'])))
-    traj['reward_extr'] = self.extr_reward(traj)
-    traj['reward_expl'] = self.expl_reward(traj)
-    traj['reward_goal'] = self.goal_reward(traj)
-    traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
-    def wloss(traj):
+      traj['reward_extr'] = self.extr_reward(traj)
+      traj['reward_expl'] = self.expl_reward(traj)
+      traj['reward_goal'] = self.goal_reward(traj)
       wtraj = self.split_traj(traj)
       loss, metrics = self.worker.loss(wtraj)
       return loss, (wtraj, metrics)
-    def mloss(traj):
+    def mloss(start):
+      policy = functools.partial(self.policy, imag=True)
+      traj = self.wm.imagine_carry(
+        policy, start, self.config.imag_horizon,
+          self.initial(len(start['is_first'])))
+      traj['reward_extr'] = self.extr_reward(traj)
+      traj['reward_expl'] = self.expl_reward(traj)
+      traj['reward_goal'] = self.goal_reward(traj)
       mtraj = self.abstract_traj(traj)
       loss, metrics = self.manager.loss(mtraj)
-      return loss, (mtraj, metrics)
+      return loss, (mtraj, metrics, traj)
     
-    mets, (wtraj, metrics) = self.worker.opt(self.worker.actor, wloss, traj, has_aux=True)
+    mets, (wtraj, metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
     metrics.update(mets)
     for key, critic in self.worker.critics.items():
       mets = critic.train(wtraj, self.worker.actor)
       metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     
-    mets, (mtraj, metrics) = self.manager.opt(self.manager.actor, mloss, traj, has_aux=True)
-    metrics.update(mets)
+    mets, (mtraj, metrics_, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
+    metrics_.update(mets)
     for key, critic in self.worker.critics.items():
       mets = critic.train(mtraj, self.worker.actor)
-      metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+      metrics_.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+    metrics = {**metrics, **metrics_}  
     return traj, metrics
 
 #def train_jointly_old(self, imagine, start):
@@ -288,9 +302,10 @@ class Hierarchy(nj.Module):
     enc = self.enc({'goal': goal, 'context': context})
     dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
     rec = -dec.log_prob(sg(goal))
-    if self.config.goal_kl:
+    if self.config.goal_kl and False:
       kl = tfd.kl_divergence(enc, self.prior)
-      kl, mets, self.kl_scale = self.kl(kl, self.kl_scale)
+      (kl, mets, _scale), self.kl_scale = self.pure_update_kl(self.kl_scale, jax.random.PRNGKey(42), kl)
+      self.kl_scale['value'] = _scale
       metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
       assert rec.shape == kl.shape, (rec.shape, kl.shape)
     else:
@@ -304,6 +319,13 @@ class Hierarchy(nj.Module):
     metrics['goalrec_mean'] = rec.mean()
     metrics['goalrec_std'] = rec.std()
     return metrics
+  
+  def update_kl(self, kl):
+    _scale = nj.context()['value']
+    kl, mets, _scale = self.kl(kl, _scale)
+
+    return kl, mets, _scale
+
 
 #def train_vae_imag(self, traj):
 #  metrics = {}

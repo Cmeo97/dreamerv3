@@ -38,6 +38,8 @@ class Context(dict):
 
   def update(self, entries):
     for key, value in dict(entries).items():
+      if 'grad_scale' in key:
+        print(key)
       self[key] = value
 
   def __setitem__(self, key, value):
