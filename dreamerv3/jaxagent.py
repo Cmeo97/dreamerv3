@@ -68,7 +68,10 @@ class JAXAgent(embodied.Agent):
   def train(self, data, state=None):
     rng = self._next_rngs(self.train_devices)
     if state is None:
-      state, self.varibs = self._init_train(self.varibs, rng, data['is_first'])
+      state, self.varibs = self._init_train(self.varibs, rng, data['is_first']) 
+      
+      #state, self.varibs = self._init_train(self.varibs, rng, data['is_first']) 
+      #self.varibs = self._train(self.varibs, rng, data, state, init_only=True)
     (outs, state, mets), self.varibs = self._train(
         self.varibs, rng, data, state)
     outs = self._convert_outs(outs, self.train_devices)
@@ -226,10 +229,10 @@ class JAXAgent(embodied.Agent):
     data = self._convert_inps(data, self.train_devices)
     state, varibs = self._init_train(varibs, rng, data['is_first'])
     varibs = self._train(varibs, rng, data, state, init_only=True)
-    obs = self._dummy_batch(obs_space, (1,))
-    state, varibs = self._init_policy(varibs, rng, obs['is_first'])
-    varibs = self._policy(
-         varibs, rng, obs, state, mode='train', init_only=True)
+    #obs = self._dummy_batch(obs_space, (1,))
+    #state, varibs = self._init_policy(varibs, rng, obs['is_first'])
+    #varibs = self._policy(
+    #     varibs, rng, obs, state, mode='train', init_only=True)
     return varibs
 
   def _dummy_batch(self, spaces, batch_dims):

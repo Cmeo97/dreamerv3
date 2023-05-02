@@ -52,10 +52,12 @@ class Context(dict):
     if self.ignore and key in self:
       return  # Do not overwrite existing entries.
     if not self.create and key not in self:
+      keys = '\n  '.join(sorted(self.keys()))
+
       raise RuntimeError(
           'Can only create state entries during first call. ' +
           f'You were trying to set {key} to shape {value.shape} and ' +
-          f'dtype {value.dtype}.')
+          f'dtype {value.dtype}. {keys}')
     super().__setitem__(key, value)
 
 

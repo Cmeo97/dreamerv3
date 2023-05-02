@@ -217,8 +217,8 @@ class Hierarchy(nj.Module):
     
     mets, (mtraj, metrics_, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
     metrics_.update(mets)
-    for key, critic in self.worker.critics.items():
-      mets = critic.train(mtraj, self.worker.actor)
+    for key, critic in self.manager.critics.items():
+      mets = critic.train(mtraj, self.manager.actor)
       metrics_.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     metrics = {**metrics, **metrics_}  
     return traj, metrics

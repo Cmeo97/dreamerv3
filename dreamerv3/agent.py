@@ -293,7 +293,7 @@ class ImagActorCritic(nj.Module):
     self.scorenorms = {
         k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
         for k in critics}
-    self.opt = jaxutils.Optimizer(name=f'{self.name}_actor_opt', **config.actor_opt)
+    self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
 
   def initial(self, batch_size):
     return {}
@@ -417,7 +417,7 @@ class VFunction(nj.Module):
         self.net, self.slow,
         self.config.slow_critic_fraction,
         self.config.slow_critic_update)
-    self.opt = jaxutils.Optimizer(name=f'{self.name}_critic_opt', **self.config.critic_opt)
+    self.opt = jaxutils.Optimizer(name=f'critic_opt', **self.config.critic_opt)
 
   def train(self, traj, actor):
     target = sg(self.score(traj)[1])
