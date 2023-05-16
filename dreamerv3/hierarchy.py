@@ -34,8 +34,8 @@ class Hierarchy(nj.Module):
 
   
     self.worker = agent.ImagActorCritic({
-        'extr': agent.VFunction(lambda s: s['reward_extr'], wconfig, name='wcritic_extr'),
-        'expl': agent.VFunction(lambda s: s['reward_expl'], wconfig, name='wcritic_expl'),
+        #'extr': agent.VFunction(lambda s: s['reward_extr'], wconfig, name='wcritic_extr'),
+        #'expl': agent.VFunction(lambda s: s['reward_expl'], wconfig, name='wcritic_expl'),
         'goal': agent.VFunction(lambda s: s['reward_goal'], wconfig, name='wcritic_goal'),
     }, config.worker_rews, act_space, wconfig, name='worker') 
 
@@ -46,7 +46,7 @@ class Hierarchy(nj.Module):
     self.manager = agent.ImagActorCritic({
         'extr': agent.VFunction(lambda s: s['reward_extr'], mconfig, name='mcritic_extr'),
         'expl': agent.VFunction(lambda s: s['reward_expl'], mconfig, name='mcritic_expl'),
-        'goal': agent.VFunction(lambda s: s['reward_goal'], mconfig, name='mcritic_goal'),
+        #'goal': agent.VFunction(lambda s: s['reward_goal'], mconfig, name='mcritic_goal'),
     }, config.manager_rews, self.skill_space, mconfig, name='manager')
 
     if self.config.expl_rew == 'disag':
@@ -76,10 +76,12 @@ class Hierarchy(nj.Module):
         config.skill_shape, dims='context', **config.goal_encoder, name='goal_encoder')
     self.dec = nets.MLP(
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
-    self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt')
-    self.kl_scale = {'value': 0.0}
+    
+    #self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt')
+    #self.kl_scale = {'value': 0.0}
     #self.pure_update_kl = nj.pure(self.update_kl, nested=True)
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
+    self.opt.init_kl_autoadapt((), **self.config.encdec_kl)
   
 
   def initial(self, batch_size):
@@ -302,29 +304,22 @@ class Hierarchy(nj.Module):
     enc = self.enc({'goal': goal, 'context': context})
     dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
     rec = -dec.log_prob(sg(goal))
-    if self.config.goal_kl and False:
+    if self.config.goal_kl:
       kl = tfd.kl_divergence(enc, self.prior)
-      (kl, mets, _scale), self.kl_scale = self.pure_update_kl(self.kl_scale, jax.random.PRNGKey(42), kl)
-      self.kl_scale['value'] = _scale
+      kl, mets = self.opt.update_kl(kl)
       metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
       assert rec.shape == kl.shape, (rec.shape, kl.shape)
     else:
       kl = 0.0
 
-    loss_ = (rec + kl).mean()
-    def loss(_loss):  
-      return _loss
+    
+    def loss(rec, kl):  
+      return (rec + kl).mean()
 
-    metrics.update(self.opt([self.enc, self.dec], loss, loss_))
+    metrics.update(self.opt([self.enc, self.dec], loss, rec, kl))
     metrics['goalrec_mean'] = rec.mean()
     metrics['goalrec_std'] = rec.std()
     return metrics
-  
-  def update_kl(self, kl):
-    _scale = nj.context()['value']
-    kl, mets, _scale = self.kl(kl, _scale)
-
-    return kl, mets, _scale
 
 
 #def train_vae_imag(self, traj):
@@ -359,11 +354,11 @@ class Hierarchy(nj.Module):
   def propose_goal(self, start, impl):
     feat = self.feat(start).astype(jnp.float32)
     if impl == 'replay':
-      target = random.shuffle(nj.rng(), feat).astype(jnp.float32)
+      target = random.permutation(nj.rng(), feat, independent=True).astype(jnp.float32)
       skill = self.enc({'goal': target, 'context': feat}).sample(seed=nj.rng())
       return self.dec({'skill': skill, 'context': feat}).mode()
     if impl == 'replay_direct':
-      return random.shuffle(nj.rng(), feat).astype(jnp.float32)
+      return random.permutation(nj.rng(), feat, independent=True).astype(jnp.float32)
     if impl == 'manager':
       skill = self.manager.actor(start).sample(seed=nj.rng())
       goal = self.dec({'skill': skill, 'context': feat}).mode()
@@ -535,13 +530,8 @@ class Hierarchy(nj.Module):
   def report(self, data):
     metrics = {}
     for impl in ('manager', 'prior', 'replay'):
-      rkey = key
-      del key
-      for key, video in self.report_worker(data, impl, rkey).items():
+      for key, video in self.report_worker(data, impl).items():
         metrics[f'impl_{impl}_{key}'] = video
-      #Generate new random key for worker
-      key, subkey = random.split(rkey)
-      del subkey
     return metrics
 
   def report_worker(self, data, impl):

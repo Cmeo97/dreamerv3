@@ -417,7 +417,7 @@ class VFunction(nj.Module):
         self.net, self.slow,
         self.config.slow_critic_fraction,
         self.config.slow_critic_update)
-    self.opt = jaxutils.Optimizer(name=f'critic_opt', **self.config.critic_opt)
+    self.opt = jaxutils.Optimizer(name='critic_opt', **self.config.critic_opt)
 
   def train(self, traj, actor):
     target = sg(self.score(traj)[1])

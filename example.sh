@@ -2,9 +2,9 @@
 
 #SBATCH --job-name=dreamerv3
 #SBATCH --partition=long                        
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:rtx8000:1
-#SBATCH --mem=120G                                     
+#SBATCH --cpus-per-task=8
+#SBATCH --gres=gpu:rtx8000:4
+#SBATCH --mem=160G                                     
 
 
 #conda_env=${1}
@@ -20,8 +20,8 @@ env=$1
 task=$2
 f=$3
 
-python dreamerv3/train.py \
+nohup python dreamerv3/train.py \
   --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/${f} \
   --configs ${env} \
   --task ${task} \
-#> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err

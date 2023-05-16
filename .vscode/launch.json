@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--logdir", "~/scratch/dreamerv3/logdir/909",
+            "args": ["--logdir", "~/scratch/dreamerv3/logdir/91258",
                      "--configs", "loconav",
                      "--task", "loconav_ant_maze_m"],
             "justMyCode": true
