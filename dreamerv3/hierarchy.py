@@ -188,41 +188,51 @@ class Hierarchy(nj.Module):
     #traj['reward_expl'] = self.expl_reward(traj)
     #traj['reward_goal'] = self.goal_reward(traj)
     #traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
-    def wloss(start):
-      policy = functools.partial(self.policy, imag=True)
-      traj = self.wm.imagine_carry(
-        policy, start, self.config.imag_horizon,
-          self.initial(len(start['is_first'])))
-      traj['reward_extr'] = self.extr_reward(traj)
-      traj['reward_expl'] = self.expl_reward(traj)
-      traj['reward_goal'] = self.goal_reward(traj)
-      wtraj = self.split_traj(traj)
+    def wloss(wtraj):
+      #policy = functools.partial(self.policy, imag=True)
+      #traj = self.wm.imagine_carry(
+      #  policy, start, self.config.imag_horizon,
+      #    self.initial(len(start['is_first'])))
+      #traj['reward_extr'] = self.extr_reward(traj)
+      #traj['reward_expl'] = self.expl_reward(traj)
+      #traj['reward_goal'] = self.goal_reward(traj)
+      #wtraj = self.split_traj(traj)
       loss, metrics = self.worker.loss(wtraj)
       return loss, (wtraj, metrics)
-    def mloss(start):
-      policy = functools.partial(self.policy, imag=True)
-      traj = self.wm.imagine_carry(
-        policy, start, self.config.imag_horizon,
-          self.initial(len(start['is_first'])))
-      traj['reward_extr'] = self.extr_reward(traj)
-      traj['reward_expl'] = self.expl_reward(traj)
-      traj['reward_goal'] = self.goal_reward(traj)
-      mtraj = self.abstract_traj(traj)
+    def mloss(mtraj):
+      #policy = functools.partial(self.policy, imag=True)
+      #traj = self.wm.imagine_carry(
+      #  policy, start, self.config.imag_horizon,
+      #    self.initial(len(start['is_first'])))
+      #traj['reward_extr'] = self.extr_reward(traj)
+      #traj['reward_expl'] = self.expl_reward(traj)
+      #traj['reward_goal'] = self.goal_reward(traj)
+      #mtraj = self.abstract_traj(traj)
       loss, metrics = self.manager.loss(mtraj)
       return loss, (mtraj, metrics, traj)
     
-    mets, (wtraj, metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
-    metrics.update(mets)
+    policy = functools.partial(self.policy, imag=True)
+    traj = self.wm.imagine_carry(
+      policy, start, self.config.imag_horizon,
+        self.initial(len(start['is_first'])))
+    traj['reward_extr'] = self.extr_reward(traj)
+    traj['reward_expl'] = self.expl_reward(traj)
+    traj['reward_goal'] = self.goal_reward(traj)
+    wtraj = self.split_traj(traj)
+    mtraj = self.abstract_traj(traj)
+    mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, wtraj, has_aux=True)
+    worker_metrics.update({f'{k}': v for k, v in mets.items()})
     for key, critic in self.worker.critics.items():
       mets = critic.train(wtraj, self.worker.actor)
-      metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+      worker_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     
-    mets, (mtraj, metrics_, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
-    metrics_.update(mets)
+    mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, mtraj, has_aux=True)
+    manager_metrics.update({f'{k}': v for k, v in mets.items()})
     for key, critic in self.manager.critics.items():
       mets = critic.train(mtraj, self.manager.actor)
-      metrics_.update({f'{key}_critic_{k}': v for k, v in mets.items()})
-    metrics = {**metrics, **metrics_}  
+      manager_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+    metrics.update({f'worker_{k}': v for k, v in worker_metrics.items()}) 
+    metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
     return traj, metrics
 
 #def train_jointly_old(self, imagine, start):
