@@ -25,6 +25,10 @@ class Agent(nj.Module):
 
   configs = yaml.YAML(typ='safe').load(
       (embodied.Path(__file__).parent / 'configs.yaml').read())
+  
+  if configs['defaults']['director_config']:
+    configs = yaml.YAML(typ='safe').load(
+      (embodied.Path(__file__).parent / 'configs_director.yaml').read())
 
   def __init__(self, obs_space, act_space, step, config):
     self.config = config
@@ -36,9 +40,9 @@ class Agent(nj.Module):
         self.wm, self.act_space, self.config, name='task_behavior')
     if config.expl_behavior == 'None':
       self.expl_behavior = self.task_behavior
-    else:
-      self.expl_behavior = getattr(behaviors, config.expl_behavior)(
-          self.wm, self.act_space, self.config, name='expl_behavior')
+    #else:
+    #  self.expl_behavior = getattr(behaviors, config.expl_behavior)(
+    #      self.wm, self.act_space, self.config, name='expl_behavior')
     
 
   def policy_initial(self, batch_size):
@@ -132,6 +136,8 @@ class WorldModel(nj.Module):
         'reward': nets.MLP((), **config.reward_head, name='rew'),
         'cont': nets.MLP((), **config.cont_head, name='cont')}
     self.opt = jaxutils.Optimizer(name='model_opt', **config.model_opt)
+    if self.config.wmkl_active:
+      self.opt.init_kl_autoadapt((), **self.config.wmkl)
     scales = self.config.loss_scales.copy()
     image, vector = scales.pop('image'), scales.pop('vector')
     scales.update({k: image for k in self.heads['decoder'].cnn_shapes})
@@ -166,7 +172,11 @@ class WorldModel(nj.Module):
       out = out if isinstance(out, dict) else {name: out}
       dists.update(out)
     losses = {}
-    losses['dyn'] = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
+    kl = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
+    if self.config.wmkl_active:
+      losses['dyn'], mets = self.opt.update_kl(kl)
+    else: 
+      losses['dyn'] = kl
     losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
     for key, dist in dists.items():
       loss = -dist.log_prob(data[key].astype(jnp.float32))
@@ -180,6 +190,7 @@ class WorldModel(nj.Module):
     last_action = data['action'][:, -1]
     state = last_latent, last_action
     metrics = self._metrics(data, dists, post, prior, losses, model_loss)
+    metrics.update({f'wmkl_{k}': v for k, v in mets.items()})
     return model_loss.mean(), (state, out, metrics)
 
   def imagine(self, policy, start, horizon):
@@ -201,36 +212,67 @@ class WorldModel(nj.Module):
     traj['weight'] = jnp.cumprod(discount * traj['cont'], 0) / discount
     return traj
 
+  #def imagine_carry(self, policy, start, horizon, carry):
+  #  first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
+  #  keys = list(self.rssm.initial(1).keys())
+  #  start = {k: v for k, v in start.items() if k in keys}
+  #  keys += list(carry.keys()) + ['action']
+  #  states = [start]
+  #  outs, carry = policy(start, carry)
+  #  action = outs['action']
+  #  if hasattr(action, 'sample'):
+  #    action = action.sample(seed=nj.rng())
+  #  actions = [action]
+  #  carries = [carry]
+  #  for _ in range(horizon):
+  #    states.append(self.rssm.img_step(states[-1], actions[-1]))
+  #    outs, carry = policy(states[-1], carry)
+  #    action = outs['action']
+  #    if hasattr(action, 'sample'):
+  #      action = action.sample(seed=nj.rng())
+  #    actions.append(action)
+  #    carries.append(carry)
+  #  transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
+  #  traj = {**transp(states), **transp(carries), 'action': actions}
+  #  traj = {k: jnp.stack(v, 0) for k, v in traj.items()}
+  #  cont = self.heads['cont'](traj).mean()
+  #  cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
+  #  traj['cont'] = cont
+  #  traj['weight'] = jnp.cumprod(
+  #      self.config.imag_discount * cont, axis=0) / self.config.imag_discount
+  #  traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
+  #  return traj
+
   def imagine_carry(self, policy, start, horizon, carry):
     first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
     keys = list(self.rssm.initial(1).keys())
     start = {k: v for k, v in start.items() if k in keys}
-    keys += list(carry.keys()) + ['action']
-    states = [start]
+    start['carry'] = carry
     outs, carry = policy(start, carry)
     action = outs['action']
     if hasattr(action, 'sample'):
-      action = action.sample(seed=nj.rng())
-    actions = [action]
-    carries = [carry]
-    for _ in range(horizon):
-      states.append(self.rssm.img_step(states[-1], actions[-1]))
-      outs, carry = policy(states[-1], carry)
-      action = outs['action']
-      if hasattr(action, 'sample'):
         action = action.sample(seed=nj.rng())
-      actions.append(action)
-      carries.append(carry)
-    transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
-    traj = {**transp(states), **transp(carries), 'action': actions}
-    traj = {k: jnp.stack(v, 0) for k, v in traj.items()}
+    start = {**start,**carry, 'action': action, 'carry': carry}
+    def step(prev, _):
+        prev = prev.copy()
+        state = self.rssm.img_step(prev, prev.pop('action'))
+        outs, carry = policy(state, prev.pop('carry'))
+        action = outs['action']
+        if hasattr(action, 'sample'):
+            action = action.sample(seed=nj.rng())
+        return {**state,**carry, 'action': action, 'carry': carry}
+    traj = jaxutils.scan(
+        step, jnp.arange(horizon), start, self.config.imag_unroll)
+    _ = traj.pop('carry')
+    traj = {
+        k: jnp.concatenate([start[k][None], v], 0) for k, v in traj.items()}
     cont = self.heads['cont'](traj).mean()
-    cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
-    traj['cont'] = cont
+    traj['cont'] = jnp.concatenate([first_cont[None], cont[1:]], 0)
     traj['weight'] = jnp.cumprod(
-        self.config.imag_discount * cont, axis=0) / self.config.imag_discount
+        self.config.imag_discount * traj['cont'], axis=0) / self.config.imag_discount
     traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
     return traj
+
 
   def report(self, data):
     state = self.initial(len(data['is_first']))
@@ -294,6 +336,9 @@ class ImagActorCritic(nj.Module):
         k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
         for k in critics}
     self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
+    shape = act_space.shape[:-1] if act_space.discrete else act_space.shape
+    if self.config.actent_active:
+      self.opt.init_kl_autoadapt(shape, **self.config.actent, inverse=True)  ## used for entropy here
 
   def initial(self, batch_size):
     return {}
@@ -314,57 +359,6 @@ class ImagActorCritic(nj.Module):
       metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     return traj, metrics
   
-  ##TF Version from Director 
-  #def update(self, traj, tape=None):
-  #  tape = tape or tf.GradientTape()
-  #  metrics = {}
-  #  for key, critic in self.critics.items():
-  #    mets = critic.train(traj, self.actor)
-  #    metrics.update({f'{key}_{k}': v for k, v in mets.items()})
-  #  with tape:
-  #    scores = []
-  #    for key, critic in self.critics.items():
-  #      ret, baseline = critic.score(traj, self.actor)
-  #      ret = self.retnorms[key](ret)
-  #      baseline = self.retnorms[key](baseline, update=False)
-  #      score = self.scorenorms[key](ret - baseline)
-  #      metrics[f'{key}_score_mean'] = score.mean()
-  #      metrics[f'{key}_score_std'] = score.std()
-  #      metrics[f'{key}_score_mag'] = tf.abs(score).mean()
-  #      metrics[f'{key}_score_max'] = tf.abs(score).max()
-  #      scores.append(score * self.scales[key])
-  #    score = self.advnorm(tf.reduce_sum(scores, 0))
-  #    loss, mets = self.loss(traj, score)
-  #    metrics.update(mets)
-  #    loss = loss.mean()
-  #  metrics.update(self.opt(tape, loss, self.actor))
-  #  return metrics
-
-  def update(self, traj):
-    metrics = {}
-    for key, critic in self.critics.items():
-        mets = critic.train(traj, self.actor)
-        metrics.update({f'{key}_{k}': v for k, v in mets.items()})
-    scores = []
-    for key, critic in self.critics.items():
-      ret, baseline = critic.score(traj, self.actor)
-      ret = self.retnorms[key](ret)
-      baseline = self.retnorms[key](baseline, update=False)
-      score = self.scorenorms[key](ret - baseline)
-      metrics[f'{key}_score_mean'] = score.mean()
-      metrics[f'{key}_score_std'] = score.std()
-      metrics[f'{key}_score_mag'] = jnp.abs(score).mean()
-      metrics[f'{key}_score_max'] = jnp.abs(score).max()
-      scores.append(score * self.scales[key])
-    score = self.advnorm(jnp.sum(scores, 0))
-    loss, mets = self.loss(traj, score)
-    metrics.update(mets)
-    grads_fn = jax.grad(lambda actor: self.loss(traj, self.advantage(actor))[0].mean())
-    grads = grads_fn(self.actor)
-
-    metrics.update(self.opt.update(grads))
-    return metrics
-
   def loss(self, traj):
     metrics = {}
     advs = []
@@ -384,7 +378,19 @@ class ImagActorCritic(nj.Module):
     logpi = policy.log_prob(sg(traj['action']))[:-1]
     loss = {'backprop': -adv, 'reinforce': -logpi * sg(adv)}[self.grad]
     ent = policy.entropy()[:-1]
-    loss -= self.config.actent.scale * ent
+    
+    if self.config.actent_active:
+      if self.config.actent_norm:
+        lo, hi = policy.minent, policy.maxent
+        ent = (ent - lo) / (hi - lo)
+      ent_loss, mets = self.opt.update_ent(ent) ## used for entropy here
+      metrics.update({f'actor_{k}': v for k, v in mets.items()})
+      loss += ent_loss  # as in director and dreamerv2
+    else: 
+      ent_loss = self.config.actent.scale * ent
+      loss -= ent_loss 
+        
+  
     loss *= sg(traj['weight'])[:-1]
     loss *= self.config.loss_scales.actor
     metrics.update(self._metrics(traj, policy, logpi, ent, adv))
@@ -417,7 +423,7 @@ class VFunction(nj.Module):
         self.net, self.slow,
         self.config.slow_critic_fraction,
         self.config.slow_critic_update)
-    self.opt = jaxutils.Optimizer(name='critic_opt', **self.config.critic_opt)
+    self.opt = jaxutils.Optimizer(name='opt', **self.config.critic_opt)
 
   def train(self, traj, actor):
     target = sg(self.score(traj)[1])
