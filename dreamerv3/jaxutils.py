@@ -419,8 +419,8 @@ class Optimizer(nj.Module):
     if self.scaling:
       grads = tree_map(lambda x: x / self.grad_scale.read(), grads)
       finite = self._update_scale(grads)
-      metrics[f'{self.name}_grad_scale'] = self.grad_scale.read()
-      metrics[f'{self.name}_grad_overflow'] = (~finite).astype(jnp.float32)
+      metrics[f'grad_scale'] = self.grad_scale.read()
+      metrics[f'grad_overflow'] = (~finite).astype(jnp.float32)
     optstate = self.get('state', self.opt.init, params)
     updates, optstate = self.opt.update(grads, optstate, params)
     self.put('state', optstate)
@@ -458,8 +458,21 @@ class Optimizer(nj.Module):
     
     loss = sg(self._scale.read()) * (-reg if self._inverse else reg)
     metrics = {
-        'mean': reg.mean(), 'std': reg.std(),
-        'scale_mean': self._scale.read().mean(), 'scale_std': self._scale.read().std()}
+        'kl_mean': reg.mean(), 'kl_std': reg.std(),
+        'kl_scale_mean': self._scale.read().mean(), 'kl_scale_std': self._scale.read().std()}
+    
+    return loss, metrics 
+  
+  def update_ent(self, reg, update=True):
+      #.kl_scale['value']
+    #_scale = self.get('_scale', lambda x: x, self._scale)
+    if update:
+        self._update_kl_scale(reg)
+    
+    loss = sg(self._scale.read()) * (-reg if self._inverse else reg)
+    metrics = {
+        'ent_mean': reg.mean(), 'ent_std': reg.std(),
+        'ent_scale_mean': self._scale.read().mean(), 'ent_scale_std': self._scale.read().std()}
     
     return loss, metrics 
   
