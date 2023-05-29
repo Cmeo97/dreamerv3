@@ -3,8 +3,8 @@
 #SBATCH --job-name=dreamerv3
 #SBATCH --partition=long                        
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:rtx8000:4
-#SBATCH --mem=160G                                     
+#SBATCH --gres=gpu:rtx8000:1
+#SBATCH --mem=40G                                     
 
 
 #conda_env=${1}
@@ -19,9 +19,10 @@ conda activate ~/.conda/envs/tf211-jax044-py310
 env=$1
 task=$2
 f=$3
-
+#010 runs bad optimization scheme, with new image_carry
+#others run better optimization scheme, with new image_carry
 nohup python dreamerv3/train.py \
-  --logdir ~/scratch/dreamerv3/logdir/${env}/${task}/${f} \
+  --logdir ~/scratch/directorv2/logdir/${env}/${task}/${f}-$(date +%Y%m%d-%H%M%S) \
   --configs ${env} \
   --task ${task} \
 > logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
