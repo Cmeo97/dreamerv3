@@ -79,7 +79,7 @@ class RSSM(nj.Module):
     else:
       mean = state['mean'].astype(f32)
       std = state['std'].astype(f32)
-      return tfp.MultivariateNormalDiag(mean, std)
+      return tfd.MultivariateNormalDiag(mean, std)
 
   def obs_step(self, prev_state, prev_action, embed, is_first):
     is_first = cast(is_first)
@@ -171,9 +171,11 @@ class RSSM(nj.Module):
       loss = jnp.maximum(loss, free)
     return loss
 
-  def rep_loss(self, post, prior, impl='kl', free=1.0):
+  def rep_loss(self, post, prior, impl='kl', free=1.0, balance=1.0):
     if impl == 'kl':
-      loss = self.get_dist(post).kl_divergence(self.get_dist(sg(prior)))
+      lhs = self.get_dist(post).kl_divergence(self.get_dist(sg(prior)))
+      rhs = self.get_dist(prior).kl_divergence(self.get_dist(sg(post)))
+      loss = balance * lhs + (1 - balance) * rhs
     elif impl == 'uniform':
       uniform = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), prior)
       loss = self.get_dist(post).kl_divergence(self.get_dist(uniform))
@@ -194,14 +196,18 @@ class MultiEncoder(nj.Module):
       self, shapes, cnn_keys=r'.*', mlp_keys=r'.*', mlp_layers=4,
       mlp_units=512, cnn='resize', cnn_depth=48,
       cnn_blocks=2, resize='stride',
-      symlog_inputs=False, minres=4, **kw):
+      symlog_inputs=False, minres=4, cnn_kernels=[4,4,4], **kw):
     excluded = ('is_first', 'is_last')
     shapes = {k: v for k, v in shapes.items() if (
         k not in excluded and not k.startswith('log_'))}
     self.cnn_shapes = {k: v for k, v in shapes.items() if (
         len(v) == 3 and re.match(cnn_keys, k))}
-    self.mlp_shapes = {k: v for k, v in shapes.items() if (
+    if cnn == 'resnet':
+      self.mlp_shapes = {k: v for k, v in shapes.items() if (
         len(v) in (1, 2) and re.match(mlp_keys, k))}
+    else:
+      self.mlp_shapes = {k: v for k, v in shapes.items() if (
+        len(v) in (0, 1) and re.match(mlp_keys, k))}
     self.shapes = {**self.cnn_shapes, **self.mlp_shapes}
     print('Encoder CNN shapes:', self.cnn_shapes)
     print('Encoder MLP shapes:', self.mlp_shapes)
@@ -209,6 +215,8 @@ class MultiEncoder(nj.Module):
     mlp_kw = {**kw, 'symlog_inputs': symlog_inputs, 'name': 'mlp'}
     if cnn == 'resnet':
       self._cnn = ImageEncoderResnet(cnn_depth, cnn_blocks, resize, **cnn_kw)
+    elif cnn == 'simple':
+      self._cnn = ImageEncoderSimple(cnn_depth, cnn_kernels, **cnn_kw)
     else:
       raise NotImplementedError(cnn)
     if self.mlp_shapes:
@@ -244,7 +252,7 @@ class MultiDecoder(nj.Module):
       self, shapes, inputs=['tensor'], cnn_keys=r'.*', mlp_keys=r'.*',
       mlp_layers=4, mlp_units=512, cnn='resize', cnn_depth=48, cnn_blocks=2,
       image_dist='mse', vector_dist='mse', resize='stride', bins=255,
-      outscale=1.0, minres=4, cnn_sigmoid=False, **kw):
+      outscale=1.0, minres=4, cnn_sigmoid=False, cnn_kernels=[4, 4, 4], **kw):
     excluded = ('is_first', 'is_last', 'is_terminal', 'reward')
     shapes = {k: v for k, v in shapes.items() if k not in excluded}
     self.cnn_shapes = {
@@ -265,6 +273,9 @@ class MultiDecoder(nj.Module):
       if cnn == 'resnet':
         self._cnn = ImageDecoderResnet(
             shape, cnn_depth, cnn_blocks, resize, **cnn_kw, name='cnn')
+      elif cnn == 'simple':
+        self._cnn = ImageDecoderSimple(
+            shape, cnn_depth, cnn_kernels ,**cnn_kw, name='cnn')  
       else:
         raise NotImplementedError(cnn)
     if self.mlp_shapes:
@@ -299,6 +310,49 @@ class MultiDecoder(nj.Module):
     if self._image_dist == 'mse':
       return jaxutils.MSEDist(mean, 3, 'sum')
     raise NotImplementedError(self._image_dist)
+  
+
+class ImageEncoderSimple(nj.Module):
+  def __init__(self, depth, kernels, minres, **kw):
+    self._depth = depth
+    self._kernels = kernels
+    self._kw = kw
+
+  def __call__(self, x):
+    kw = {**self._kw, 'preact': False, 'pad': 'valid'}
+    depth = self._depth
+    x = jaxutils.cast_to_compute(x) 
+    for i, kernel in enumerate(self._kernels):
+      x = self.get(f'conv{i}', Conv2D, depth, kernel, 2, **kw)(x)
+      depth *= 2
+    return x
+
+
+class ImageDecoderSimple(nj.Module):
+
+  def __init__(self, shape, depth, kernels, minres, sigmoid, **kw):
+    self._shape = shape
+    self._depth = depth
+    self._kernels = kernels
+    self._kw = kw
+
+
+  def __call__(self, x):
+    x = jaxutils.cast_to_compute(x)
+    x = jnp.reshape(x, [-1, 1, 1, x.shape[-1]])
+    depth = self._depth * 2 ** (len(self._kernels) - 2)
+    kw = {**self._kw, 'preact': False, 'pad': 'valid'}
+    for i, kernel in enumerate(self._kernels[:-1]):
+      x = self.get(f's{i}res', Conv2D, depth, kernel, 2, transp=True, **kw)(x)
+      depth //= 2
+    if i == len(self._kernels) - 2:
+      kw = {}
+      depth = self._shape[-1]
+    x = self.get(f'out', Conv2D, depth, self._kernels[-1], 2, transp=True, **kw)(x)
+    x = jax.nn.sigmoid(x)
+    assert x.shape[-3:] == self._shape, (x.shape, self._shape)
+    return x
+
 
 
 class ImageEncoderResnet(nj.Module):
