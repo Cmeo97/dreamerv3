@@ -25,6 +25,7 @@ def main(argv=None):
 
   parsed, other = embodied.Flags(configs=['defaults']).parse_known(argv)
   config = embodied.Config(agt.Agent.configs['defaults'])
+  
   for name in parsed.configs:
     config = config.update(agt.Agent.configs[name])
   config = embodied.Flags(config).parse(other)

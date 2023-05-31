@@ -554,7 +554,6 @@ class SlowUpdater:
 
 
 
-
 ## Generated using ChatGPT, translated from TF to JAX/Flax, original version in Director
 class AutoAdapt(nj.Module):
     

@@ -110,6 +110,7 @@ def context():
   context = CONTEXT.get(threading.get_ident(), None)
   if context is None:
     raise RuntimeError('Wrap impure functions in pure() before running them.')
+
   return context
 
 
@@ -404,6 +405,8 @@ class Module(object, metaclass=ModuleMeta):
   def get(self, name, *args, **kwargs):
     """Retrieve or create a state entry that belongs to this module."""
     path = self.path + '/' + name
+    #if path == 'agent/wm/rssm/initial':
+    #  print(path)
     if name in self._submodules:
       return self._submodules[name]
     if path in context():
@@ -421,6 +424,8 @@ class Module(object, metaclass=ModuleMeta):
 
   def put(self, name, value):
     """Update or create a single state entry that belongs to this module."""
+    #if name == 'initial':
+    #  print(name)
     self.putm({self.path + '/' + name: value})
     return value
 

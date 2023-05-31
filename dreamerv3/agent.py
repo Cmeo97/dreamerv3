@@ -27,6 +27,8 @@ class Agent(nj.Module):
       (embodied.Path(__file__).parent / 'configs.yaml').read())
   
   if configs['defaults']['director_config']:
+    print('director_config is not None')
+    del configs
     configs = yaml.YAML(typ='safe').load(
       (embodied.Path(__file__).parent / 'configs_director.yaml').read())
 
@@ -159,12 +161,17 @@ class WorldModel(nj.Module):
     return state, outs, metrics
 
   def loss(self, data, state):
+    #print('data', data)
     embed = self.encoder(data)
+    #print('embed shape', embed.shape)
     prev_latent, prev_action = state
     prev_actions = jnp.concatenate([
         prev_action[:, None], data['action'][:, :-1]], 1)
     post, prior = self.rssm.observe(
         embed, prev_actions, data['is_first'], prev_latent)
+    #for key in post.keys():
+    #  print(key, 'post_shape', post[key].shape)
+    #  print(key, 'prior_shape', prior[key].shape)
     dists = {}
     feats = {**post, 'embed': embed}
     for name, head in self.heads.items():
@@ -173,6 +180,7 @@ class WorldModel(nj.Module):
       dists.update(out)
     losses = {}
     kl = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
+    #print('kl shape', kl.shape)
     if self.config.wmkl_active:
       losses['dyn'], mets = self.opt.update_kl(kl)
     else: 

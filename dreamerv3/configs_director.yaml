@@ -60,7 +60,7 @@ defaults:
   # Agent
   task_behavior: Hierarchy
   expl_behavior: None
-  batch_size: 16
+  batch_size: 32
   batch_length: 64
   data_loaders: 8
 
@@ -69,7 +69,7 @@ defaults:
   grad_heads: [decoder, reward, cont]
   rssm: {units: 1024, deter: 1024, stoch: 32, classes: 32, act: elu, norm: layer, initial: learned, unroll: True}
   encoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [4, 4, 4, 4], cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: False}
-  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 6, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 5, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
   reward_head: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_mse, outscale: 0.1, inputs: [deter, stoch]}
   cont_head: {layers: 4, units: 512, act: elu, norm: layer, dist: binary, outscale: 0.1, inputs: [deter, stoch]}
   loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 1.0, actor: 1.0, critic: 1.0, slowreg: 1.0}
@@ -78,11 +78,11 @@ defaults:
   model_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
   wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
   wmkl_balance: 0.8
-  wmkl_active: True
+  wmkl_active: true
 
   # Actor Critic
   actor: {layers: 4, units: 512, act: elu, norm: layer, minstd: 0.03, maxstd: 1.0, outscale: 0.1, unimix: 0.01, inputs: [deter, stoch]}
-  critic: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_disc, outscale: 0.1, inputs: [deter, stoch]}
+  critic: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog, outscale: 0.1, inputs: [deter, stoch], director: True}
   actor_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
   critic_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
   actor_dist_disc: onehot
@@ -223,11 +223,6 @@ crafter:
 dmc_vision:
 
   task: dmc_walker_walk
-  run.train_ratio: 512
-  rssm.deter: 512
-  .*\.cnn_depth: 32
-  .*\.layers: 2
-  .*\.units: 512
   encoder: {mlp_keys: '$^', cnn_keys: 'image'}
   decoder: {mlp_keys: '$^', cnn_keys: 'image'}
 

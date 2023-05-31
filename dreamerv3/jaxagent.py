@@ -45,7 +45,7 @@ class JAXAgent(embodied.Agent):
     self._should_metrics = embodied.when.Every(self.config.metrics_every)
     self._transform()
     self.varibs = self._init_varibs(obs_space, act_space)
-    print(self.varibs.keys())
+    #print(self.varibs.keys())
     self.varibs_ = self.varibs
     self.sync()
 
