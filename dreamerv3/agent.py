@@ -198,7 +198,8 @@ class WorldModel(nj.Module):
     last_action = data['action'][:, -1]
     state = last_latent, last_action
     metrics = self._metrics(data, dists, post, prior, losses, model_loss)
-    metrics.update({f'wmkl_{k}': v for k, v in mets.items()})
+    if self.config.wmkl_active:
+      metrics.update({f'wmkl_{k}': v for k, v in mets.items()})
     return model_loss.mean(), (state, out, metrics)
 
   def imagine(self, policy, start, horizon):
@@ -220,43 +221,43 @@ class WorldModel(nj.Module):
     traj['weight'] = jnp.cumprod(discount * traj['cont'], 0) / discount
     return traj
 
-  #def imagine_carry(self, policy, start, horizon, carry):
-  #  first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
-  #  keys = list(self.rssm.initial(1).keys())
-  #  start = {k: v for k, v in start.items() if k in keys}
-  #  keys += list(carry.keys()) + ['action']
-  #  states = [start]
-  #  outs, carry = policy(start, carry)
-  #  action = outs['action']
-  #  if hasattr(action, 'sample'):
-  #    action = action.sample(seed=nj.rng())
-  #  actions = [action]
-  #  carries = [carry]
-  #  for _ in range(horizon):
-  #    states.append(self.rssm.img_step(states[-1], actions[-1]))
-  #    outs, carry = policy(states[-1], carry)
-  #    action = outs['action']
-  #    if hasattr(action, 'sample'):
-  #      action = action.sample(seed=nj.rng())
-  #    actions.append(action)
-  #    carries.append(carry)
-  #  transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
-  #  traj = {**transp(states), **transp(carries), 'action': actions}
-  #  traj = {k: jnp.stack(v, 0) for k, v in traj.items()}
-  #  cont = self.heads['cont'](traj).mean()
-  #  cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
-  #  traj['cont'] = cont
-  #  traj['weight'] = jnp.cumprod(
-  #      self.config.imag_discount * cont, axis=0) / self.config.imag_discount
-  #  traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
-  #  return traj
+  def imagine_carry_director(self, policy, imag, start, horizon, carry):
+    first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
+    keys = list(self.rssm.initial(1).keys())
+    start = {k: v for k, v in start.items() if k in keys}
+    keys += list(carry.keys()) + ['action']
+    states = [start]
+    outs, carry = policy(start, carry, imag)
+    action = outs['action']
+    if hasattr(action, 'sample'):
+      action = action.sample(seed=nj.rng())
+    actions = [action]
+    carries = [carry]
+    for _ in range(horizon):
+      states.append(self.rssm.img_step(states[-1], actions[-1]))
+      outs, carry = policy(states[-1], carry, imag)
+      action = outs['action']
+      if hasattr(action, 'sample'):
+        action = action.sample(seed=nj.rng())
+      actions.append(action)
+      carries.append(carry)
+    transp = lambda x: {k: [x[t][k] for t in range(len(x))] for k in x[0]}
+    traj = {**transp(states), **transp(carries), 'action': actions}
+    traj = {k: jnp.stack(v, 0) for k, v in traj.items()}
+    cont = self.heads['cont'](traj).mean()
+    cont = jnp.concatenate([first_cont[None], cont[1:]], 0)
+    traj['cont'] = cont
+    traj['weight'] = jnp.cumprod(
+        self.config.imag_discount * cont, axis=0) / self.config.imag_discount
+    traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
+    return traj
 
-  def imagine_carry(self, policy, start, horizon, carry):
+  def imagine_carry(self, policy, imag, start, horizon, carry):
     first_cont = (1.0 - start['is_terminal']).astype(jnp.float32)
     keys = list(self.rssm.initial(1).keys())
     start = {k: v for k, v in start.items() if k in keys}
     start['carry'] = carry
-    outs, carry = policy(start, carry)
+    outs, carry = policy(start, carry, imag)
     action = outs['action']
     if hasattr(action, 'sample'):
         action = action.sample(seed=nj.rng())
@@ -264,7 +265,7 @@ class WorldModel(nj.Module):
     def step(prev, _):
         prev = prev.copy()
         state = self.rssm.img_step(prev, prev.pop('action'))
-        outs, carry = policy(state, prev.pop('carry'))
+        outs, carry = policy(state, prev.pop('carry'), imag)
         action = outs['action']
         if hasattr(action, 'sample'):
             action = action.sample(seed=nj.rng())

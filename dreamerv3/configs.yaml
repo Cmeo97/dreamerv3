@@ -59,7 +59,7 @@ defaults:
   director_config: True
   task_behavior: Hierarchy
   expl_behavior: None
-  batch_size: 64
+  batch_size: 16
   batch_length: 64
   data_loaders: 8
 

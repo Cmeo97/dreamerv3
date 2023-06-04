@@ -333,14 +333,13 @@ class ImageEncoderSimple(nj.Module):
     self._kw = kw
 
   def __call__(self, x):
-    Conv = functools.partial(Conv2D, stride=2, pad='valid')
     kw = {**self._kw, 'preact': False}
     depth = self._depth
     #print('depth', depth)
     #print('Simple encoder input, x.shape', x.shape)
     x = jaxutils.cast_to_compute(x) 
     for i, kernel in enumerate(self._kernels):
-      x = self.get(f'conv{i}', Conv, depth, kernel, **kw)(x)
+      x = self.get(f'conv{i}', Conv2D, depth, kernel, stride=2, pad='valid', **kw)(x)
       depth *= 2
       #print('Simple Encoder output, x_', i, ': ', x.shape)
     #print('Simple encoder output, x.shape', x.shape)
@@ -357,17 +356,16 @@ class ImageDecoderSimple(nj.Module):
 
 
   def __call__(self, x):
-    ConvT = functools.partial(Conv2D, transp=True, stride=2, pad='valid')
     x = jaxutils.cast_to_compute(x)
     x = jnp.reshape(x, [-1, 1, 1, x.shape[-1]])
     #print('Simple Decoder input, x.shape', x.shape)
     depth = self._depth * 2 ** (len(self._kernels) - 2)
-    kw = {**self._kw, 'preact': False, 'pad': 'valid'}
+    kw = {**self._kw, 'preact': False}
     for i, kernel in enumerate(self._kernels[:-1]):
-      x = self.get(f's{i}res', ConvT, depth, kernel, **kw)(x)
+      x = self.get(f'conv{i}', Conv2D, depth, kernel, transp=True, stride=2, pad='valid', **kw)(x)
       depth //= 2
       #print('Simple Decoder output, x_', i, ': ', x.shape)
-    x = self.get(f'out', ConvT, self._shape[-1], self._kernels[-1])(x)
+    x = self.get(f'out', Conv2D, self._shape[-1], self._kernels[-1], transp=True, stride=2, pad='valid')(x)
     x = jax.nn.sigmoid(x)
     assert x.shape[-3:] == self._shape, (x.shape, self._shape)
     #print('Simple Decoder output, x.shape', x.shape)

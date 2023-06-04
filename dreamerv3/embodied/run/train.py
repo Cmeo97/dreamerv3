@@ -10,7 +10,7 @@ def train(agent, env, replay, logger, args):
   logdir.mkdirs()
   print('Logdir', logdir)
   should_expl = embodied.when.Until(args.expl_until)
-  should_train = embodied.when.Ratio(args.train_ratio / args.batch_steps)
+  should_train = embodied.when.Every(args.train_every)
   should_log = embodied.when.Clock(args.log_every)
   should_save = embodied.when.Clock(args.save_every)
   should_sync = embodied.when.Every(args.sync_every)

@@ -10,9 +10,9 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--logdir", "~/scratch/dreamerv3/logdir/directorv2_trial_12",
-                     "--configs", "dmc_vision",
-                     "--task", "dmc_walker_walk"],
+            "args": ["--logdir", "~/scratch/dreamerv3/logdir/director_debug_loconav_lab_jointly_imagine",
+                     "--configs", "debug_loconav",
+                    ],
             "justMyCode": true
         }
     ]

@@ -70,7 +70,6 @@ class JAXAgent(embodied.Agent):
     rng = self._next_rngs(self.train_devices)
     if state is None:
       state, self.varibs = self._init_train(self.varibs_, rng, data['is_first']) 
-      
       #self.varibs = self._train(self.varibs, rng, data, state, init_only=True)
       #state, self.varibs = self._init_train(self.varibs, rng, data['is_first']) 
       #self.varibs = self._train(self.varibs, rng, data, state, init_only=True)

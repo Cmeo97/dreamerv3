@@ -32,7 +32,6 @@ class Hierarchy(nj.Module):
         'critic.inputs': self.config.worker_inputs,
     })
 
-  
     self.worker = agent.ImagActorCritic({
         #'extr': agent.VFunction(lambda s: s['reward_extr'], wconfig, name='wcritic_extr'),
         #'expl': agent.VFunction(lambda s: s['reward_expl'], wconfig, name='wcritic_expl'),
@@ -48,18 +47,6 @@ class Hierarchy(nj.Module):
         'expl': agent.VFunction(lambda s: s['reward_expl'], mconfig, name='mcritic_expl'),
         #'goal': agent.VFunction(lambda s: s['reward_goal'], mconfig, name='mcritic_goal'),
     }, config.manager_rews, self.skill_space, mconfig, name='manager')
-
-    if self.config.expl_rew == 'disag':
-      self.expl_reward = expl.Disag(wm, act_space, config)
-    elif self.config.expl_rew == 'adver':
-      #self.expl_reward = self.elbo_reward
-      print('expl_reard setted as elbo_reward')
-    else:
-      raise NotImplementedError(self.config.expl_rew)
-    if config.explorer:
-      self.explorer = agent.ImagActorCritic({
-          'expl': agent.VFunction(self.expl_reward, config),
-      }, {'expl': 1.0}, act_space, config, name='explorer')
 
     # VAE manager prior definition
     shape = self.skill_space.shape
@@ -77,11 +64,18 @@ class Hierarchy(nj.Module):
     self.dec = nets.MLP(
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
     
-    #self.kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt')
-    #self.kl_scale = {'value': 0.0}
-    #self.pure_update_kl = nj.pure(self.update_kl, nested=True)
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
     self.opt.init_kl_autoadapt((), **self.config.encdec_kl)
+
+    if self.config.imagine == 'Director':
+      self.imagine = lambda start: self.wm.imagine_carry_director(
+        self.policy, True, start, self.config.imag_horizon,
+          self.initial(len(start['is_first'])))
+    else:
+      self.imagine = lambda start: self.wm.imagine_carry(
+        self.policy, True, start, self.config.imag_horizon,
+          self.initial(len(start['is_first'])))
+    
   
 
   def initial(self, batch_size):
@@ -117,116 +111,41 @@ class Hierarchy(nj.Module):
   def train(self, imagine, start, data):
     success = lambda rew: (rew[-1] > 0.7).astype(jnp.float32).mean()
     metrics = {}
-    #if self.config.expl_rew == 'disag':
-    #  metrics.update(self.expl_reward.train(data))
-    if self.config.vae_replay:
-      metrics.update(self.train_vae_replay(data))
-    #if self.config.explorer:
-    #  traj, mets = self.explorer.train(imagine, start, data)
-    #  metrics.update({f'explorer_{k}': v for k, v in mets.items()})
-    #  metrics.update(self.train_vae_imag(traj))
-    #  if self.config.explorer_repeat:
-    #    goal = self.feat(traj)[-1]
-    #    metrics.update(self.train_worker(imagine, start, goal)[1])
-
-
-    if self.config.jointly == 'new':  
-      traj, mets = self.train_jointly(imagine, start)
-      metrics.update(mets)
-      metrics['success_manager'] = success(traj['reward_goal'])
-      #if self.config.vae_imag:
-      #  metrics.update(self.train_vae_imag(traj))
-
-
-    #elif self.config.jointly == 'old':
-    #  traj, mets = self.train_jointly_old(imagine, start)
-    #  metrics.update(mets)
-    #  metrics['success_manager'] = success(traj['reward_goal'])
-    #  if self.config.vae_imag:
-    #    metrics.update(self.train_vae_imag(traj))
-    #elif self.config.jointly == 'off':
-    #  for impl in self.config.worker_goals:
-    #    goal = self.propose_goal(start, impl)
-    #    traj, mets = self.train_worker(imagine, start, goal)
-    #    metrics.update(mets)
-    #    metrics[f'success_{impl}'] = success(traj['reward_goal'])
-    #    if self.config.vae_imag:
-    #      metrics.update(self.train_vae_imag(traj))
-    #  traj, mets = self.train_manager(imagine, start)
-    #  metrics.update(mets)
-    #  metrics['success_manager'] = success(traj['reward_goal'])
-    #else:
-    #  raise NotImplementedError(self.config.jointly)
+    metrics.update(self.train_vae_replay(data))  
+    traj, mets = self.train_jointly(start)
+    metrics.update(mets)
+    metrics['success_manager'] = success(traj['reward_goal'])
     return None, metrics
 
-#def train_jointly(self, imagine, start):
-#    start = start.copy()
-#    metrics = {}
-#    with tf.GradientTape(persistent=True) as tape:
-#      policy = functools.partial(self.policy, imag=True)
-#      traj = self.wm.imagine_carry(
-#          policy, start, self.config.imag_horizon,
-#          self.initial(len(start['is_first'])))
-#      traj['reward_extr'] = self.extr_reward(traj)
-#      traj['reward_expl'] = self.expl_reward(traj)
-#      traj['reward_goal'] = self.goal_reward(traj)
-#      traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
-#      wtraj = self.split_traj(traj)
-#      mtraj = self.abstract_traj(traj)
-#    mets = self.worker.update(wtraj, tape)
-#    metrics.update({f'worker_{k}': v for k, v in mets.items()})
-#    mets = self.manager.update(mtraj, tape)
-#    metrics.update({f'manager_{k}': v for k, v in mets.items()})
-#    return traj, metrics
-
-
-  def train_jointly(self, imagine, start):
+  def train_jointly(self, start):  # Theoretically Wrong (Probably)
     start = start.copy()
     metrics = {}
-    
-    #traj['reward_extr'] = self.extr_reward(traj)
-    #traj['reward_expl'] = self.expl_reward(traj)
-    #traj['reward_goal'] = self.goal_reward(traj)
-    #traj['delta'] = traj['goal'] - self.feat(traj).astype(jnp.float32)
-    def wloss(wtraj):
-      #policy = functools.partial(self.policy, imag=True)
-      #traj = self.wm.imagine_carry(
-      #  policy, start, self.config.imag_horizon,
-      #    self.initial(len(start['is_first'])))
-      #traj['reward_extr'] = self.extr_reward(traj)
-      #traj['reward_expl'] = self.expl_reward(traj)
-      #traj['reward_goal'] = self.goal_reward(traj)
-      #wtraj = self.split_traj(traj)
+
+    def wloss(start):
+      traj = self.imagine(start)
+      traj['reward_extr'] = self.extr_reward(traj)
+      traj['reward_expl'] = self.expl_reward(traj)
+      traj['reward_goal'] = self.goal_reward(traj)
+      wtraj = self.split_traj(traj)
       loss, metrics = self.worker.loss(wtraj)
       return loss, (wtraj, metrics)
-    def mloss(mtraj):
-      #policy = functools.partial(self.policy, imag=True)
-      #traj = self.wm.imagine_carry(
-      #  policy, start, self.config.imag_horizon,
-      #    self.initial(len(start['is_first'])))
-      #traj['reward_extr'] = self.extr_reward(traj)
-      #traj['reward_expl'] = self.expl_reward(traj)
-      #traj['reward_goal'] = self.goal_reward(traj)
-      #mtraj = self.abstract_traj(traj)
+    def mloss(start):
+      traj = self.imagine(start)
+      traj['reward_extr'] = self.extr_reward(traj)
+      traj['reward_expl'] = self.expl_reward(traj)
+      traj['reward_goal'] = self.goal_reward(traj)
+      mtraj = self.abstract_traj(traj)
       loss, metrics = self.manager.loss(mtraj)
       return loss, (mtraj, metrics, traj)
     
-    policy = functools.partial(self.policy, imag=True)
-    traj = self.wm.imagine_carry(
-      policy, start, self.config.imag_horizon,
-        self.initial(len(start['is_first'])))
-    traj['reward_extr'] = self.extr_reward(traj)
-    traj['reward_expl'] = self.expl_reward(traj)
-    traj['reward_goal'] = self.goal_reward(traj)
-    wtraj = self.split_traj(traj)
-    mtraj = self.abstract_traj(traj)
-    mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, wtraj, has_aux=True)
+
+    mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
     worker_metrics.update({f'{k}': v for k, v in mets.items()})
     for key, critic in self.worker.critics.items():
       mets = critic.train(wtraj, self.worker.actor)
       worker_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
     
-    mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, mtraj, has_aux=True)
+    mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
     manager_metrics.update({f'{k}': v for k, v in mets.items()})
     for key, critic in self.manager.critics.items():
       mets = critic.train(mtraj, self.manager.actor)
@@ -235,67 +154,6 @@ class Hierarchy(nj.Module):
     metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
     return traj, metrics
 
-#def train_jointly_old(self, imagine, start):
-#  start = start.copy()
-#  metrics = {}
-#  sg = lambda x: tf.nest.map_structure(sg, x)
-#  context = self.feat(start)
-#  with tf.GradientTape(persistent=True) as tape:
-#    skill = self.manager.actor(sg(start)).sample()
-#    goal = self.dec({'skill': skill, 'context': context}).mode()
-#    goal = (
-#        self.feat(start).astype(tf.float32) + goal
-#        if self.config.manager_delta else goal)
-#    worker = lambda s: self.worker.actor(sg({
-#        **s, 'goal': goal, 'delta': goal - self.feat(s)})).sample()
-#    traj = imagine(worker, start, self.config.imag_horizon)
-#    traj['goal'] = jnp.repeat(goal[None], 1 + self.config.imag_horizon, 0)
-#    traj['skill'] = jnp.repeat(skill[None], 1 + self.config.imag_horizon, 0)
-#    traj['reward_extr'] = self.extr_reward(traj)
-#    traj['reward_expl'] = self.expl_reward(traj)
-#    traj['reward_goal'] = self.goal_reward(traj)
-#    traj['delta'] = traj['goal'] - self.feat(traj).astype(tf.float32)
-#    wtraj = traj.copy()
-#    mtraj = self.abstract_traj_old(traj)
-#  mets = self.worker.update(wtraj, tape)
-#  metrics.update({f'worker_{k}': v for k, v in mets.items()})
-#  mets = self.manager.update(mtraj, tape)
-#  metrics.update({f'manager_{k}': v for k, v in mets.items()})
-#  return traj, metrics
-
-#def train_manager(self, imagine, start):
-#  start = start.copy()
-#  with tf.GradientTape(persistent=True) as tape:
-#    policy = functools.partial(self.policy, imag=True)
-#    traj = self.wm.imagine_carry(
-#        policy, start, self.config.imag_horizon,
-#        self.initial(len(start['is_first'])))
-#    traj['reward_extr'] = self.extr_reward(traj)
-#    traj['reward_expl'] = self.expl_reward(traj)
-#    traj['reward_goal'] = self.goal_reward(traj)
-#    traj['delta'] = traj['goal'] - self.feat(traj).astype(tf.float32)
-#    mtraj = self.abstract_traj(traj)
-#  metrics = self.manager.update(mtraj, tape)
-#  metrics = {f'manager_{k}': v for k, v in metrics.items()}
-#  return traj, metrics
-#
-#def train_worker(self, imagine, start, goal):
-#  start = start.copy()
-#  metrics = {}
-#  sg = lambda x: tf.nest.map_structure(sg, x)
-#  with tf.GradientTape(persistent=True) as tape:
-#    worker = lambda s: self.worker.actor(sg({
-#        **s, 'goal': goal, 'delta': goal - self.feat(s).astype(tf.float32),
-#    })).sample()
-#    traj = imagine(worker, start, self.config.imag_horizon)
-#    traj['goal'] = jnp.repeat(goal[None], 1 + self.config.imag_horizon, 0)
-#    traj['reward_extr'] = self.extr_reward(traj)
-#    traj['reward_expl'] = self.expl_reward(traj)
-#    traj['reward_goal'] = self.goal_reward(traj)
-#    traj['delta'] = traj['goal'] - self.feat(traj).astype(tf.float32)
-#  mets = self.worker.update(traj, tape)
-#  metrics.update({f'worker_{k}': v for k, v in mets.items()})
-#  return traj, metrics
 
   def train_vae_replay(self, data):
     metrics = {}
@@ -311,24 +169,23 @@ class Hierarchy(nj.Module):
     else:
       goal = context = feat
     
-    enc = self.enc({'goal': goal, 'context': context})
-    dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
-    rec = -dec.log_prob(sg(goal))
-    if self.config.goal_kl:
+    def loss(goal, context): 
+      enc = self.enc({'goal': goal, 'context': context})
+      dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
+      rec = -dec.log_prob(sg(goal))
       kl = tfd.kl_divergence(enc, self.prior)
       kl, mets = self.opt.update_kl(kl)
-      metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
       assert rec.shape == kl.shape, (rec.shape, kl.shape)
-    else:
-      kl = 0.0
+      mets['rec_mean'] = rec.mean()
+      mets['rec_std'] = rec.std()
+      loss = (rec + kl).mean()
+      mets['loss'] = loss
+      return loss, mets
 
-    
-    def loss(rec, kl):  
-      return (rec + kl).mean()
+    goal_loss, mets = self.opt([self.enc, self.dec], loss, goal, context, has_aux=True)
+    metrics.update({f'goal_vae_{k}': v for k, v in mets.items()})
+    metrics.update(goal_loss)
 
-    metrics.update(self.opt([self.enc, self.dec], loss, rec, kl))
-    metrics['goalrec_mean'] = rec.mean()
-    metrics['goalrec_std'] = rec.std()
     return metrics
 
 

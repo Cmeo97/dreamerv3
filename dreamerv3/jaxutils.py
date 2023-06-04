@@ -91,6 +91,28 @@ class OneHotDist(tfd.OneHotCategorical):
     probs = self._pad(super().probs_parameter(), sample.shape)
     return sg(sample) + (probs - sg(probs)).astype(sample.dtype)
 
+  #def sample(self, sample_shape=(), seed=None): 
+
+  # Sampling strategy as in Director, doens't seem to solve the norm problem on the optimizer
+  
+  #  if not isinstance(sample_shape, (list, tuple)):
+  #    sample_shape = (sample_shape,)
+  #  logits = self.logits_parameter().astype(self.dtype)
+  #  shape = tuple(logits.shape)
+  #  logits = logits.reshape([np.prod(logits.shape[:-1]), shape[-1]])
+  #  if np.prod(sample_shape) != 1:
+  #    indices =  jax.random.categorical(seed, logits, shape=sample_shape + (logits.shape[0],))
+  #    sample = jax.nn.one_hot(indices, shape[-1]).astype(self.dtype)
+  #    sample = sample.transpose((1, 0, 2))
+  #  else:
+  #    indices =  jax.random.categorical(seed, logits)
+  #    sample = jax.nn.one_hot(indices, shape[-1]).astype(self.dtype)
+  #  sample = sg(sample.reshape(sample_shape + shape))
+  #  # Straight through biased gradient estimator.
+  #  probs = self._pad(super().probs_parameter(), sample.shape)
+  #  sample += (probs - sg(probs)).astype(sample.dtype)
+  #  return sample
+
   def _pad(self, tensor, shape):
     while len(tensor.shape) < len(shape):
       tensor = tensor[None]
@@ -385,6 +407,9 @@ class Optimizer(nj.Module):
           jnp.array, 1e4, jnp.float32, name='grad_scale')
       self.good_steps = nj.Variable(
           jnp.array, 0, jnp.int32, name='good_steps')
+    self.opt_step = nj.Variable(
+          jnp.array, 0, jnp.int32, name='opt_step')
+    
       
   def init_kl_autoadapt(self, shape, impl, scale, target, min, max, vel=0.1, thres=0.1, inverse=False):
       self._shape = shape
@@ -399,7 +424,6 @@ class Optimizer(nj.Module):
 
   def __call__(self, modules, lossfn, *args, has_aux=False, **kwargs):
     def wrapped(*args, **kwargs):
-      
       outs = lossfn(*args, **kwargs)
       loss, aux = outs if has_aux else (outs, None)
       assert loss.dtype == jnp.float32, (self.name, loss.dtype)
@@ -407,6 +431,8 @@ class Optimizer(nj.Module):
       if self.scaling:
         loss *= sg(self.grad_scale.read())
       return loss, aux
+    
+    # Find variables.
     metrics = {}
     loss, params, grads, aux = nj.grad(
         wrapped, modules, has_aux=True)(*args, **kwargs)
@@ -414,21 +440,34 @@ class Optimizer(nj.Module):
       count = sum([np.prod(x.shape) for x in params.values()])
       print(f'Optimizer {self.name} has {count:,} variables.')
       self.PARAM_COUNTS[self.path] = count
+
+    #Distributed Sync
     if parallel():
       grads = tree_map(lambda x: jax.lax.pmean(x, 'i'), grads)
+
+    # Compute scaled gradient. 
     if self.scaling:
       grads = tree_map(lambda x: x / self.grad_scale.read(), grads)
       finite = self._update_scale(grads)
       metrics[f'grad_scale'] = self.grad_scale.read()
       metrics[f'grad_overflow'] = (~finite).astype(jnp.float32)
+
+
     optstate = self.get('state', self.opt.init, params)
     updates, optstate = self.opt.update(grads, optstate, params)
     self.put('state', optstate)
     nj.context().update(optax.apply_updates(params, updates))
+
+    # Gradient Clipping
     norm = optax.global_norm(grads)
-    if self.scaling:
+
+    
+    if self.scaling:  
       norm = jnp.where(jnp.isfinite(norm), norm, jnp.nan)
     self.step.write(self.step.read() + jnp.isfinite(norm).astype(jnp.int32))
+    step = self.opt_step.read() + 1
+    self.opt_step.write(step)
+    metrics['opt_step'] = step
     metrics['loss'] = loss.mean()
     metrics['grad_norm'] = norm
     metrics['grad_steps'] = self.step.read()

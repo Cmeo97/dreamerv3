@@ -11,7 +11,7 @@ def train_eval(
   logdir.mkdirs()
   print('Logdir', logdir)
   should_expl = embodied.when.Until(args.expl_until)
-  should_train = embodied.when.Ratio(args.train_ratio / args.batch_steps)
+  should_train = embodied.when.Every(args.train_every) #Ratio(args.train_ratio / args.batch_steps)
   should_log = embodied.when.Clock(args.log_every)
   should_save = embodied.when.Clock(args.save_every)
   should_eval = embodied.when.Every(args.eval_every, args.eval_initial)
@@ -76,14 +76,15 @@ def train_eval(
   state = [None]  # To be writable from train step function below.
   batch = [None]
   def train_step(tran, worker):
-    for _ in range(should_train(step)):
-      with timer.scope('dataset_train'):
-        batch[0] = next(dataset_train)
-      outs, state[0], mets = agent.train(batch[0], state[0])
-      metrics.add(mets, prefix='train')
-      if 'priority' in outs:
-        train_replay.prioritize(outs['key'], outs['priority'])
-      updates.increment()
+    if should_train(step):
+      for _ in range(args.train_steps):
+        with timer.scope('dataset_train'):
+          batch[0] = next(dataset_train)
+        outs, state[0], mets = agent.train(batch[0], state[0])
+        metrics.add(mets, prefix='train')
+        if 'priority' in outs:
+          train_replay.prioritize(outs['key'], outs['priority'])
+        updates.increment()
     if should_sync(updates):
       agent.sync()
     if should_log(step):
