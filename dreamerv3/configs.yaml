@@ -9,11 +9,12 @@ defaults:
   replay_online: False
   eval_dir: ''
   filter: '.*'
+  multi-gpu: False
 
   jax:
     platform: gpu
     jit: True
-    precision: float16
+    precision: bfloat16
     prealloc: True
     debug_nans: False
     logical_cpus: 0
@@ -104,6 +105,127 @@ defaults:
   scorenorm: {impl: off}
  
 
+  # Exploration
+  expl_rewards: {extr: 1.0, disag: 0.1}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0}
+  disag_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: mse, outscale: 1.0, inputs: [deter, stoch, action], winit: normal, fan: avg}
+  disag_target: [stoch]
+  disag_models: 8
+
+director: # works (till 400k steps, then diverges..)
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: False
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 8
+  batch_length: 16
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {units: 1024, deter: 1024, stoch: 32, classes: 32, act: elu, norm: layer, initial: learned, unroll: True}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [4, 4, 4, 4], cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: False}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 5, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_mse, outscale: 0.1, inputs: [deter, stoch]}
+  cont_head: {layers: 4, units: 512, act: elu, norm: layer, dist: binary, outscale: 0.1, inputs: [deter, stoch]}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 1.0, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 0.0}
+  rep_loss: {impl: kl, free: 0.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 512, act: elu, norm: layer, minstd: 0.03, maxstd: 1.0, outscale: 0.1, unimix: 0.01, inputs: [deter, stoch]}
+  critic: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog, outscale: 0.1, inputs: [deter, stoch], director: True}
+  actor_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  critic_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 8
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 100
+  slow_critic_fraction: 1.0
+  slow_critic: True
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: mean_std, decay: 0.999, max: 1e2}
+  scorenorm: {impl: off, decay: 0.99, max: 1e8}
+ 
+
   # HRL
   env_skill_duration: 8
   train_skill_duration: 8
@@ -111,14 +233,13 @@ defaults:
   manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
   worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
   worker_inputs: [deter, stoch, goal]
-  worker_report_horizon: 64
+  worker_report_horizon: 16
   skill_proposal: manager
   goal_proposal: replay
   goal_reward: cosine_max
-  goal_encoder: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
-  goal_decoder: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  goal_encoder: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal], director: True}
+  goal_decoder: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill], director: True}
   worker_goals: [manager]
-  jointly: new
   vae_imag: False
   vae_replay: True
   vae_span: False
@@ -133,13 +254,1175 @@ defaults:
   adver_impl: squared
   manager_delta: False
   goal_kl: True
+  imagine: Dreamer 
+  train_jointly: efficient
+
 
   # Exploration
-  expl_rewards: {extr: 1.0, disag: 0.1}
-  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0}
-  disag_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: mse, outscale: 1.0, inputs: [deter, stoch, action], winit: normal, fan: avg}
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
   disag_target: [stoch]
   disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2: # not tested
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 8
+  batch_length: 16
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: True, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-rssm: # not tested
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {units: 1024, deter: 1024, stoch: 32, classes: 32, act: elu, norm: layer, initial: learned, unroll: True}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [4, 4, 4, 4], cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: False}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 5, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_mse, outscale: 0.1, inputs: [deter, stoch]}
+  cont_head: {layers: 4, units: 512, act: elu, norm: layer, dist: binary, outscale: 0.1, inputs: [deter, stoch]}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-symlog: # not tested
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: False, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-fb: # not tested, minus free bits
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: True, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 0.0}
+  rep_loss: {impl: kl, free: 0.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-klb: # not tested, minus kl balance
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: True, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 1.0, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-perc: # not tested
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: True, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255, symlog_inputs: False}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: mean_std, decay: 0.999, max: 1e2}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+directorV2-buckets: # not tested
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: True
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 16
+  batch_length: 64
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {deter: 2048, units: 768 , stoch: 32, classes: 32, act: silu, norm: layer, initial: learned, unimix: 0.01, unroll: False, action_clip: 1.0, winit: normal, fan: avg}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: True, minres: 4}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: silu, norm: layer, mlp_layers: 4, mlp_units: 768 , cnn: resnet, cnn_depth: 64, cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, minres: 4, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: symlog_disc, outscale: 0.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg, bins: 255}
+  cont_head: {layers: 4, units: 768 , act: silu, norm: layer, dist: binary, outscale: 1.0, outnorm: False, inputs: [deter, stoch], winit: normal, fan: avg}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-8, clip: 1000.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 768 , act: silu, norm: layer, minstd: 0.1, maxstd: 1.0, outscale: 1.0, outnorm: False, unimix: 0.01, inputs: [deter, stoch], winit: normal, fan: avg, symlog_inputs: False}
+  critic: {layers: 4, units: 768, act: silu, norm: layer, dist: symlog, outscale: 0.1, inputs: [deter, stoch], director: True}
+  actor_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  critic_opt: {opt: adam, lr: 3e-5, eps: 1e-5, clip: 100.0, wd: 0.0, warmup: 0, lateclip: 0.0}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 16
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 1
+  slow_critic_fraction: 0.02
+  slow_critic: False
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0}
+  scorenorm: {impl: off}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 64
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 768, act: silu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal]}
+  goal_decoder: {layers: 4, units: 768, act: silu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill]}
+  worker_goals: [manager]  
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Director  
+  train_jointly: efficient
+  #imagine: Dreamer
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
 
 minecraft:
 
@@ -193,7 +1476,7 @@ atari100k:
   encoder: {mlp_keys: '$^', cnn_keys: 'image'}
   decoder: {mlp_keys: '$^', cnn_keys: 'image'}
 
-crafter:
+crafter:  #same as director
 
   task: crafter_reward
   envs.amount: 1
@@ -245,8 +1528,10 @@ loconav:
   run:
     train_ratio: 512
     log_keys_max: '^log_.*'
-  encoder: {mlp_keys: '.*', cnn_keys: 'image'}
-  decoder: {mlp_keys: '.*', cnn_keys: 'image'}
+  #encoder: {mlp_keys: '.*', cnn_keys: 'image'}
+  #decoder: {mlp_keys: '.*', cnn_keys: 'image'}
+  encoder: {mlp_keys: '.*(joints|sensors|actuator|effectors|appendages|bodies|height|zaxis).*', cnn_keys: 'image'}
+  decoder: {mlp_keys: '.*(joints|sensors|actuator|effectors|appendages|bodies|height|zaxis).*', cnn_keys: 'image'}
 
 small:
   rssm.deter: 512
@@ -261,10 +1546,10 @@ medium:
   .*\.layers: 4
 
 large:
-  rssm.deter: 2048    #1024 1024
-  .*\.cnn_depth: 64  #64
-  .*\.units: 768    #512 156
-  .*\.layers: 4   #4
+  rssm.deter: 2048    
+  .*\.cnn_depth: 64  
+  .*\.units: 768    
+  .*\.layers: 4   
 
 xlarge:
   rssm.deter: 4096
@@ -285,6 +1570,11 @@ multicpu:
   batch_size: 12
   batch_length: 10
 
+multigpu:
+  jax:
+    policy_devices: [0, 1, 2, 3]
+    train_devices: [0, 1, 2, 3]
+
 pinpad:
 
   task: pinpad_five
@@ -293,18 +1583,17 @@ pinpad:
 
 
 debug:
-
   jax: {jit: True, prealloc: False, debug: True, platform: gpu}
   envs: {restart: False, amount: 3}
   wrapper: {length: 100, checks: True}
   run:
     eval_every: 1000
-    log_every: 5
     save_every: 10
     train_ratio: 32
     actor_batch: 2
   batch_size: 8
-  batch_length: 12
+  batch_length: 16
+  imag_horizon: 8
   replay_size: 1e5
   encoder.cnn_depth: 8
   decoder.cnn_depth: 8

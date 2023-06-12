@@ -56,14 +56,14 @@ class JAXAgent(embodied.Agent):
     varibs = self.varibs if self.single_device else self.policy_varibs
     if state is None:
       state, _ = self._init_policy(varibs, rng, obs['is_first'])
-    else:
-      state = tree_map(
-          np.asarray, state, is_leaf=lambda x: isinstance(x, list))
-      state = self._convert_inps(state, self.policy_devices)
+    #else:
+    #  state = tree_map(
+    #      np.asarray, state, is_leaf=lambda x: isinstance(x, list))
+    #  state = self._convert_inps(state, self.policy_devices)
     (outs, state), _ = self._policy(varibs, rng, obs, state, mode=mode)
     outs = self._convert_outs(outs, self.policy_devices)
     # TODO: Consider keeping policy states in accelerator memory.
-    state = self._convert_outs(state, self.policy_devices)
+    #state = self._convert_outs(state, self.policy_devices)
     return outs, state
 
   def train(self, data, state=None):
@@ -75,7 +75,7 @@ class JAXAgent(embodied.Agent):
       #self.varibs = self._train(self.varibs, rng, data, state, init_only=True)
     (outs, state, mets), self.varibs = self._train(
         self.varibs, rng, data, state)
-    outs = self._convert_outs(outs, self.train_devices)
+    #outs = self._convert_outs(outs, self.train_devices)
     self._updates.increment()
     if self._should_metrics(self._updates):
       mets = self._convert_mets(mets, self.train_devices)
@@ -86,7 +86,7 @@ class JAXAgent(embodied.Agent):
       assert jaxutils.Optimizer.PARAM_COUNTS
       for name, count in jaxutils.Optimizer.PARAM_COUNTS.items():
         mets[f'params_{name}'] = float(count)
-    return outs, state, mets
+    return state, mets # it was outs, state, mets
 
   def report(self, data):
     rng = self._next_rngs(self.train_devices)

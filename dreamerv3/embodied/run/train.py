@@ -73,10 +73,11 @@ def train(agent, env, replay, logger, args):
     for _ in range(should_train(step)):
       with timer.scope('dataset'):
         batch[0] = next(dataset)
-      outs, state[0], mets = agent.train(batch[0], state[0])
+      state[0], mets = agent.train(batch[0], state[0])  # it was outs, state[0], mets = agent.train(batch[0], state[0], init_only=True)
       metrics.add(mets, prefix='train')
-      if 'priority' in outs:
-        replay.prioritize(outs['key'], outs['priority'])
+      #if 'priority' in outs:
+      #  print('Prioritize replay.')
+      #  replay.prioritize(outs['key'], outs['priority'])
       updates.increment()
     if should_sync(updates):
       agent.sync()

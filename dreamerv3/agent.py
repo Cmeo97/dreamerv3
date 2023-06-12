@@ -26,12 +26,12 @@ class Agent(nj.Module):
   configs = yaml.YAML(typ='safe').load(
       (embodied.Path(__file__).parent / 'configs.yaml').read())
   
-  if configs['defaults']['director_config']:
-    print('director_config is not None')
-    del configs
-    configs = yaml.YAML(typ='safe').load(
-      (embodied.Path(__file__).parent / 'configs_director.yaml').read())
-
+  #if configs['defaults']['director_config']:
+  #  print('director_config is not None')
+  #  del configs
+  #  configs = yaml.YAML(typ='safe').load(
+  #      (embodied.Path(__file__).parent / 'configs_directorV2.yaml').read())
+  
   def __init__(self, obs_space, act_space, step, config):
     self.config = config
     self.obs_space = obs_space
@@ -139,7 +139,7 @@ class WorldModel(nj.Module):
         'cont': nets.MLP((), **config.cont_head, name='cont')}
     self.opt = jaxutils.Optimizer(name='model_opt', **config.model_opt)
     if self.config.wmkl_active:
-      self.opt.init_kl_autoadapt((), **self.config.wmkl)
+      self.update_kl = jaxutils.AutoAdapt((), **self.config.wmkl, name='wmkl_autoadapt', var='kl') 
     scales = self.config.loss_scales.copy()
     image, vector = scales.pop('image'), scales.pop('vector')
     scales.update({k: image for k in self.heads['decoder'].cnn_shapes})
@@ -161,17 +161,15 @@ class WorldModel(nj.Module):
     return state, outs, metrics
 
   def loss(self, data, state):
-    #print('data', data)
+
     embed = self.encoder(data)
-    #print('embed shape', embed.shape)
+   
     prev_latent, prev_action = state
     prev_actions = jnp.concatenate([
         prev_action[:, None], data['action'][:, :-1]], 1)
     post, prior = self.rssm.observe(
         embed, prev_actions, data['is_first'], prev_latent)
-    #for key in post.keys():
-    #  print(key, 'post_shape', post[key].shape)
-    #  print(key, 'prior_shape', prior[key].shape)
+ 
     dists = {}
     feats = {**post, 'embed': embed}
     for name, head in self.heads.items():
@@ -180,9 +178,9 @@ class WorldModel(nj.Module):
       dists.update(out)
     losses = {}
     kl = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
-    #print('kl shape', kl.shape)
+
     if self.config.wmkl_active:
-      losses['dyn'], mets = self.opt.update_kl(kl)
+      losses['dyn'], mets = self.update_kl(kl)
     else: 
       losses['dyn'] = kl
     losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
@@ -341,13 +339,14 @@ class ImagActorCritic(nj.Module):
     self.retnorms = {
         k: jaxutils.Moments(**config.retnorm, name=f'retnorm_{k}')
         for k in critics}
-    self.scorenorms = {
-        k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
-        for k in critics}
-    self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
+    #self.scorenorms = {
+    #    k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
+    #    for k in critics}
+    #self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
     shape = act_space.shape[:-1] if act_space.discrete else act_space.shape
     if self.config.actent_active:
-      self.opt.init_kl_autoadapt(shape, **self.config.actent, inverse=True)  ## used for entropy here
+      self.update_ents = jaxutils.AutoAdapt(shape, **config.actent, inverse=True, name='ent_autoadapt', var='ent') 
+     
 
   def initial(self, batch_size):
     return {}
@@ -392,9 +391,9 @@ class ImagActorCritic(nj.Module):
       if self.config.actent_norm:
         lo, hi = policy.minent, policy.maxent
         ent = (ent - lo) / (hi - lo)
-      ent_loss, mets = self.opt.update_ent(ent) ## used for entropy here
+      ent_loss, mets = self.update_ents(ent) 
       metrics.update({f'actor_{k}': v for k, v in mets.items()})
-      loss += ent_loss  # as in director and dreamerv2
+      loss += ent_loss  
     else: 
       ent_loss = self.config.actent.scale * ent
       loss -= ent_loss 

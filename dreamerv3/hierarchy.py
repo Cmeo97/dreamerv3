@@ -65,7 +65,8 @@ class Hierarchy(nj.Module):
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
     
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
-    self.opt.init_kl_autoadapt((), **self.config.encdec_kl)
+    self.opt_actors = jaxutils.Optimizer(name='actors_opt', **config.actor_opt)
+    self.update_kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt') 
 
     if self.config.imagine == 'Director':
       self.imagine = lambda start: self.wm.imagine_carry_director(
@@ -84,7 +85,8 @@ class Hierarchy(nj.Module):
         'skill': jnp.zeros((batch_size,) + self.config.skill_shape, jnp.float32),
         'goal': jnp.zeros((batch_size,) + self.goal_shape, jnp.float32),
     }
-  
+
+
   def policy(self, latent, carry, imag=False):
     duration = self.config.train_skill_duration if imag else (
         self.config.env_skill_duration)
@@ -111,8 +113,11 @@ class Hierarchy(nj.Module):
   def train(self, imagine, start, data):
     success = lambda rew: (rew[-1] > 0.7).astype(jnp.float32).mean()
     metrics = {}
-    metrics.update(self.train_vae_replay(data))  
-    traj, mets = self.train_jointly(start)
+    metrics.update(self.train_vae_replay(data)) 
+    if self.config.train_jointly == 'efficient':
+      traj, mets = self.train_jointly_efficiently(start) 
+    else:
+      traj, mets = self.train_jointly(start)
     metrics.update(mets)
     metrics['success_manager'] = success(traj['reward_goal'])
     return None, metrics
@@ -154,6 +159,41 @@ class Hierarchy(nj.Module):
     metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
     return traj, metrics
 
+  def train_jointly_efficiently(self, start):  # Theoretically Correct (Probably)
+    start = start.copy()
+    metrics = {}
+
+    def loss(start):
+      traj = self.imagine(start)
+      traj['reward_extr'] = self.extr_reward(traj)
+      traj['reward_expl'] = self.expl_reward(traj)
+      traj['reward_goal'] = self.goal_reward(traj)
+      wtraj = self.split_traj(traj)
+      mtraj = self.abstract_traj(traj)
+      mloss, mmetrics = self.manager.loss(mtraj)
+      wloss, wmetrics = self.worker.loss(wtraj)
+      loss = mloss + wloss
+      return loss, (mloss, wloss, traj, mtraj, wtraj, mmetrics, wmetrics)
+    
+
+    mets, (mloss, wloss, traj, mtraj, wtraj, mmetrics, wmetrics) = self.opt_actors([self.worker.actor, self.manager.actor], loss, start, has_aux=True)
+    metrics.update({f'agent_{k}': v for k, v in mets.items()})
+    metrics['worker_loss'] = wloss
+    metrics['manager_loss'] = mloss
+
+    for key, critic in self.worker.critics.items():
+      mets = critic.train(wtraj, self.worker.actor)
+      metrics.update({f'worker_{key}_critic_{k}': v for k, v in mets.items()})
+    
+    for key, critic in self.manager.critics.items():
+      mets = critic.train(mtraj, self.manager.actor)
+      metrics.update({f'manager_{key}_critic_{k}': v for k, v in mets.items()})
+
+    metrics.update({f'worker_{k}': v for k, v in wmetrics.items()}) 
+    metrics.update({f'manager_{k}': v for k, v in mmetrics.items()}) 
+
+    return traj, metrics
+
 
   def train_vae_replay(self, data):
     metrics = {}
@@ -174,7 +214,7 @@ class Hierarchy(nj.Module):
       dec = self.dec({'skill': enc.sample(seed=nj.rng()), 'context': context})
       rec = -dec.log_prob(sg(goal))
       kl = tfd.kl_divergence(enc, self.prior)
-      kl, mets = self.opt.update_kl(kl)
+      kl, mets = self.update_kl(kl)
       assert rec.shape == kl.shape, (rec.shape, kl.shape)
       mets['rec_mean'] = rec.mean()
       mets['rec_std'] = rec.std()
@@ -235,6 +275,7 @@ class Hierarchy(nj.Module):
       skill = self.prior.sample(sample_shape=len(start['is_terminal']), seed=nj.rng())
       return self.dec({'skill': skill, 'context': feat}).mode()
     raise NotImplementedError(impl)
+  
 
   def goal_reward(self, traj):
     feat = self.feat(traj).astype(jnp.float32)
@@ -433,5 +474,3 @@ class Hierarchy(nj.Module):
       rows.append(rollout[k].mode().transpose((1, 0, 2, 3, 4)))
       videos[k] = jaxutils.video_grid(jnp.concatenate(rows, 2))
     return videos
-
-

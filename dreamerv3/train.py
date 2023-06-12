@@ -22,9 +22,10 @@ from embodied import wrappers
 
 def main(argv=None):
   from . import agent as agt
-
-  parsed, other = embodied.Flags(configs=['defaults']).parse_known(argv)
-  config = embodied.Config(agt.Agent.configs['defaults'])
+  experiment_configs = argv.pop(1)
+  _ = argv.pop(0)
+  parsed, other = embodied.Flags(configs=[experiment_configs]).parse_known(argv)
+  config = embodied.Config(agt.Agent.configs[experiment_configs])
   
   for name in parsed.configs:
     config = config.update(agt.Agent.configs[name])
@@ -204,4 +205,4 @@ def wrap_env(env, config):
 
 
 if __name__ == '__main__':
-  main()
+  main(sys.argv[1:])

@@ -16,15 +16,15 @@ conda activate ~/.conda/envs/tf211-jax044-py310
 #conda activate ~/.conda/envs/mamba/envs/ECS
 #source  ~/.venvs/${conda_env}/bin/activate
 
+
 env=$1
 task=$2
-f=$3
-#010 runs bad optimization scheme, with new image_carry
-#others run better optimization scheme, with new image_carry
-python dreamerv3/train.py \
-  --logdir ~/scratch/directorv2/degub_${f}/${task} \
+config=$3
+f=$4
+
+python -m cProfile dreamerv3/train.py \
+  --exp_config ${config} \
+  --logdir ~/scratch/directorv2/${config}/logdir/${env}/${task}/${f}-$(date +%Y%m%d-%H%M%S) \
   --configs ${env} \
   --task ${task} \
-  --imagine Dreamer \
-  --jointly Efficient \
-> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}""-"$(date +%Y%m%d-%H%M%S).err
+> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).err

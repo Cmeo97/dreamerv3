@@ -407,21 +407,7 @@ class Optimizer(nj.Module):
           jnp.array, 1e4, jnp.float32, name='grad_scale')
       self.good_steps = nj.Variable(
           jnp.array, 0, jnp.int32, name='good_steps')
-    self.opt_step = nj.Variable(
-          jnp.array, 0, jnp.int32, name='opt_step')
-    
       
-  def init_kl_autoadapt(self, shape, impl, scale, target, min, max, vel=0.1, thres=0.1, inverse=False):
-      self._shape = shape
-      self._impl = impl
-      self._target = target
-      self._min = min
-      self._max = max
-      self._vel = vel
-      self._inverse = inverse
-      self._thres = thres
-      self._scale = nj.Variable(jnp.array, scale, jnp.float32, name='kl_scale')
-
   def __call__(self, modules, lossfn, *args, has_aux=False, **kwargs):
     def wrapped(*args, **kwargs):
       outs = lossfn(*args, **kwargs)
@@ -465,9 +451,6 @@ class Optimizer(nj.Module):
     if self.scaling:  
       norm = jnp.where(jnp.isfinite(norm), norm, jnp.nan)
     self.step.write(self.step.read() + jnp.isfinite(norm).astype(jnp.int32))
-    step = self.opt_step.read() + 1
-    self.opt_step.write(step)
-    metrics['opt_step'] = step
     metrics['loss'] = loss.mean()
     metrics['grad_norm'] = norm
     metrics['grad_steps'] = self.step.read()
@@ -488,61 +471,6 @@ class Optimizer(nj.Module):
         decr.astype(jnp.float32) * self.grad_scale.read() / 2,
         1e-4, 1e4))
     return finite
-
-  def update_kl(self, reg, update=True):
-      #.kl_scale['value']
-    #_scale = self.get('_scale', lambda x: x, self._scale)
-    if update:
-        self._update_kl_scale(reg)
-    
-    loss = sg(self._scale.read()) * (-reg if self._inverse else reg)
-    metrics = {
-        'kl_mean': reg.mean(), 'kl_std': reg.std(),
-        'kl_scale_mean': self._scale.read().mean(), 'kl_scale_std': self._scale.read().std()}
-    
-    return loss, metrics 
-  
-  def update_ent(self, reg, update=True):
-      #.kl_scale['value']
-    #_scale = self.get('_scale', lambda x: x, self._scale)
-    if update:
-        self._update_kl_scale(reg)
-    
-    loss = sg(self._scale.read()) * (-reg if self._inverse else reg)
-    metrics = {
-        'ent_mean': reg.mean(), 'ent_std': reg.std(),
-        'ent_scale_mean': self._scale.read().mean(), 'ent_scale_std': self._scale.read().std()}
-    
-    return loss, metrics 
-  
-  def _update_kl_scale(self, reg):
-      avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
-      if self._impl == 'fixed':
-          pass
-      elif self._impl == 'mult':
-          below = avg < (1 / (1 + self._thres)) * self._target
-          above = avg > (1 + self._thres) * self._target
-          if self._inverse:
-              below, above = above, below
-          inside = ~(below | above)
-          
-          adjusted = (
-              above.astype(reg.dtype) * self._scale.read() * (1 + self._vel) +
-              below.astype(reg.dtype) * self._scale.read() / (1 + self._vel) +
-              inside.astype(reg.dtype) * self._scale.read())
-          
-          below_min = self._min > adjusted
-          above_max = adjusted > self._max 
-          inside_ = ~(below_min | above_max)
-
-          self._scale.write(
-              below_min.astype(reg.dtype)* self._min +
-              above_max.astype(reg.dtype) * self._max + 
-              inside_.astype(reg.dtype) * adjusted
-          )
-
- 
-
 
 
 def late_grad_clip(value=1.0):
@@ -590,105 +518,55 @@ class SlowUpdater:
         source, self.dst.getm()))
     self.updates.write(updates + 1)
 
-
-
-
-## Generated using ChatGPT, translated from TF to JAX/Flax, original version in Director
 class AutoAdapt(nj.Module):
     
-    def __init__(self, shape, impl, scale, target, min, max, vel=0.1, thres=0.1, inverse=False):
-        self._shape = shape
-        self._impl = impl
-        self._target = target
-        self._min = min
-        self._max = max
-        self._vel = vel
-        self._inverse = inverse
-        self._thres = thres
-        self._scale = nj.Variable(jnp.array, scale, jnp.float32, name='kl_scale')
+    def __init__(self, shape, impl, scale, target, min, max, vel=0.1, thres=0.1, inverse=False, var='kl'):
+      self._shape = shape
+      self._impl = impl
+      self._target = target
+      self._min = min
+      self._max = max
+      self._vel = vel
+      self._inverse = inverse
+      self._thres = thres
+      self.var = var 
+      self._scale = nj.Variable(jnp.array, scale, jnp.float32, name=f'{var}_scale')
         
-      
-
-    #def update_mult(self, reg, _scale):
-    #    avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
-    #    below = avg < (1 / (1 + self._thres)) * self._target
-    #    above = avg > (1 + self._thres) * self._target
-    #    if self._inverse:
-    #      below, above = above, below
-    #   
-    #    adjusted = jnp.where(above, _scale * (1 + self._vel), jnp.where(below,  _scale / (1 + self._vel), _scale))
-#
-    #    below_min = self._min > adjusted
-    #    above_max = adjusted > self._max 
-#
-    #    _scale = jnp.where(above_max, self._max , jnp.where(below_min, self._min, adjusted))
-#
-    #    return _scale
-    #  
-    #def update_prop(self, reg, _shape, _target, _thres, _vel, _scale, _min, _max, _inverse):
-    #      avg = reg.mean(list(range(len(reg.shape) - len(_shape))))
-    #      direction = avg - _target
-    #      if _inverse:
-    #          direction = -direction
-    #      _scale = lax.clamp(_min, _scale + _vel * direction, _max)
-    #      return _scale
-    #
     def __call__(self, reg, update=True):
-       #.kl_scale['value']
-      #_scale = self.get('_scale', lambda x: x, self._scale)
+
       if update:
-          self.update(reg)
+          self._update_scale(reg)
       
       loss = sg(self._scale.read()) * (-reg if self._inverse else reg)
       metrics = {
-          'mean': reg.mean(), 'std': reg.std(),
-          'scale_mean': self._scale.read().mean(), 'scale_std': self._scale.read().std()}
+          f'{self.var}_mean': reg.mean(), f'{self.var}_std': reg.std(),
+          f'{self.var}_scale_mean': self._scale.read().mean(), f'{self.var}_scale_std': self._scale.read().std()}
       
       return loss, metrics 
+  
+    def _update_scale(self, reg):
+      avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
+      if self._impl == 'fixed':
+          pass
+      elif self._impl == 'mult':
+          below = avg < (1 / (1 + self._thres)) * self._target
+          above = avg > (1 + self._thres) * self._target
+          if self._inverse:
+              below, above = above, below
+          inside = ~(below | above)
+          
+          adjusted = (
+              above.astype(reg.dtype) * self._scale.read() * (1 + self._vel) +
+              below.astype(reg.dtype) * self._scale.read() / (1 + self._vel) +
+              inside.astype(reg.dtype) * self._scale.read())
+          
+          below_min = self._min > adjusted
+          above_max = adjusted > self._max 
+          inside_ = ~(below_min | above_max)
 
-    def scale(self):
-        if self._impl == 'fixed':
-            scale = self._scale.read()
-        elif self._impl == 'mult':
-            scale = self._scale.read()
-        elif self._impl == 'prop':
-            scale = self._scale.read() 
-        else:
-            raise NotImplementedError(self._impl)
-        return sg(scale)
-    
-    def update(self, reg):
-        avg = reg.mean(list(range(len(reg.shape) - len(self._shape))))
-        if self._impl == 'fixed':
-            pass
-        elif self._impl == 'mult':
-            below = avg < (1 / (1 + self._thres)) * self._target
-            above = avg > (1 + self._thres) * self._target
-            if self._inverse:
-                below, above = above, below
-            inside = ~(below | above)
-           
-            adjusted = (
-                above.astype(reg.dtype) * self._scale.read() * (1 + self._vel) +
-                below.astype(reg.dtype) * self._scale.read() / (1 + self._vel) +
-                inside.astype(reg.dtype) * self._scale.read())
-           
-            below_min = self._min > adjusted
-            above_max = adjusted > self._max 
-            inside_ = ~(below_min | above_max)
+          self._scale.write(
+              below_min.astype(reg.dtype)* self._min +
+              above_max.astype(reg.dtype) * self._max + 
+              inside_.astype(reg.dtype) * adjusted
+          )
 
-            self._scale.write(
-                below_min.astype(reg.dtype)* self._min +
-                above_max.astype(reg.dtype) * self._max + 
-                inside_.astype(reg.dtype) * adjusted
-            )
-
-        elif self._impl == 'prop':
-            direction = avg - self._target
-            if self._inverse:
-                direction = -direction
-            self._scale__ = jax.numpy.copy(self._scale)    
-            self._scale__ = lax.clamp(
-                self._min, self._scale_ + self._vel * direction, self._max)
-        else:
-            raise NotImplementedError(self._impl)
