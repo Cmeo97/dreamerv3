@@ -177,8 +177,8 @@ director: # works (till 400k steps, then diverges..)
   director_config: True
   task_behavior: Hierarchy
   expl_behavior: None
-  batch_size: 8
-  batch_length: 16
+  batch_size: 32
+  batch_length: 64
   data_loaders: 8
 
 
@@ -189,9 +189,9 @@ director: # works (till 400k steps, then diverges..)
   decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 5, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
   reward_head: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_mse, outscale: 0.1, inputs: [deter, stoch]}
   cont_head: {layers: 4, units: 512, act: elu, norm: layer, dist: binary, outscale: 0.1, inputs: [deter, stoch]}
-  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 1.0, actor: 1.0, critic: 1.0, slowreg: 1.0}
-  dyn_loss: {impl: kl, free: 0.0}
-  rep_loss: {impl: kl, free: 0.0}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
   model_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
   wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
   wmkl_balance: 0.8
@@ -222,7 +222,7 @@ director: # works (till 400k steps, then diverges..)
   slow_critic_fraction: 1.0
   slow_critic: True
   advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
-  retnorm: {impl: mean_std, decay: 0.999, max: 1e2}
+  retnorm: {impl: std, decay: 0.999, max: 1e2}
   scorenorm: {impl: off, decay: 0.99, max: 1e8}
  
 
@@ -233,7 +233,7 @@ director: # works (till 400k steps, then diverges..)
   manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
   worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
   worker_inputs: [deter, stoch, goal]
-  worker_report_horizon: 16
+  worker_report_horizon: 8
   skill_proposal: manager
   goal_proposal: replay
   goal_reward: cosine_max
@@ -1525,6 +1525,7 @@ loconav:
 
   task: loconav_ant_maze_m
   env.loconav.repeat: 2
+  imag_horizon: 16
   run:
     train_ratio: 512
     log_keys_max: '^log_.*'

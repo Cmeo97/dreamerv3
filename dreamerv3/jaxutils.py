@@ -262,24 +262,24 @@ class Moments(nj.Module):
     self.perchi = perchi
     if self.impl == 'off':
       pass
-    elif self.impl == 'mean_std':
-      self.step = nj.Variable(jnp.zeros, (), jnp.int32, name='step')
-      self.mean = nj.Variable(jnp.zeros, (), jnp.float32, name='mean')
-      self.sqrs = nj.Variable(jnp.zeros, (), jnp.float32, name='sqrs')
+    elif self.impl == 'mean_std' or self.impl == 'std':
+      self.step = nj.Variable(jnp.zeros, (), jnp.int64, name='step')
+      self.mean = nj.Variable(jnp.zeros, (), jnp.float64, name='mean')
+      self.sqrs = nj.Variable(jnp.zeros, (), jnp.float64, name='sqrs')
     elif self.impl == 'min_max':
-      self.low = nj.Variable(jnp.zeros, (), jnp.float32, name='low')
-      self.high = nj.Variable(jnp.zeros, (), jnp.float32, name='high')
+      self.low = nj.Variable(jnp.zeros, (), jnp.float64, name='low')
+      self.high = nj.Variable(jnp.zeros, (), jnp.float64, name='high')
     elif self.impl == 'perc_ema':
-      self.low = nj.Variable(jnp.zeros, (), jnp.float32, name='low')
-      self.high = nj.Variable(jnp.zeros, (), jnp.float32, name='high')
+      self.low = nj.Variable(jnp.zeros, (), jnp.float64, name='low')
+      self.high = nj.Variable(jnp.zeros, (), jnp.float64, name='high')
     elif self.impl == 'perc_ema_corr':
-      self.step = nj.Variable(jnp.zeros, (), jnp.int32, name='step')
-      self.low = nj.Variable(jnp.zeros, (), jnp.float32, name='low')
-      self.high = nj.Variable(jnp.zeros, (), jnp.float32, name='high')
+      self.step = nj.Variable(jnp.zeros, (), jnp.int64, name='step')
+      self.low = nj.Variable(jnp.zeros, (), jnp.float64, name='low')
+      self.high = nj.Variable(jnp.zeros, (), jnp.float64, name='high')
     elif self.impl == 'mean_mag':
-      self.mag = nj.Variable(jnp.zeros, (), jnp.float32, name='mag')
+      self.mag = nj.Variable(jnp.zeros, (), jnp.float64, name='mag')
     elif self.impl == 'max_mag':
-      self.mag = nj.Variable(jnp.zeros, (), jnp.float32, name='mag')
+      self.mag = nj.Variable(jnp.zeros, (), jnp.float64, name='mag')
     else:
       raise NotImplementedError(self.impl)
 
@@ -303,11 +303,11 @@ class Moments(nj.Module):
       max_ = jnp.max
       per = jnp.percentile
     
-    x = sg(x.astype(jnp.float32))
+    x = sg(x.astype(jnp.float64))
     m = self.decay
     if self.impl == 'off':
       pass
-    elif self.impl == 'mean_std':
+    elif self.impl == 'mean_std' or self.impl == 'std':
       self.step.write(self.step.read() + 1)
       self.mean.write(m * self.mean.read() + (1 - m) * mean(x))
       self.sqrs.write(m * self.sqrs.read() + (1 - m) * mean(x * x))
@@ -337,8 +337,14 @@ class Moments(nj.Module):
     
     if self.impl == 'off':
       return 0.0, 1.0
+    elif self.impl == 'std':
+      corr = 1 - self.decay ** self.step.read().astype(jnp.float64)
+      mean = self.mean.read() / corr
+      var = (self.sqrs.read() / corr) - self.mean.read() ** 2
+      std = jnp.sqrt(jnp.maximum(var, 1 / self.max ** 2) + self.eps)
+      return 0, sg(std)
     elif self.impl == 'mean_std':
-      corr = 1 - self.decay ** self.step.read().astype(jnp.float32)
+      corr = 1 - self.decay ** self.step.read().astype(jnp.float64)
       mean = self.mean.read() / corr
       var = (self.sqrs.read() / corr) - self.mean.read() ** 2
       std = jnp.sqrt(jnp.maximum(var, 1 / self.max ** 2) + self.eps)
@@ -352,7 +358,7 @@ class Moments(nj.Module):
       invscale = jnp.maximum(1 / self.max, self.high.read() - self.low.read())
       return sg(offset), sg(invscale)
     elif self.impl == 'perc_ema_corr':
-      corr = 1 - self.decay ** self.step.read().astype(jnp.float32)
+      corr = 1 - self.decay ** self.step.read().astype(jnp.float64)
       lo = self.low.read() / corr
       hi = self.high.read() / corr
       invscale = jnp.maximum(1 / self.max, hi - lo)

@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--exp_config", "director", "--logdir", "~/scratch/dreamerv3/logdir/director_debug_new",
+            "args": ["--exp_config", "director", "--logdir", "logdir/director_debug_new",
                      "--configs", "debug"
                     ],
             "justMyCode": true

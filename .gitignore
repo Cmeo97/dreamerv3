@@ -7,3 +7,5 @@ __pycache__/
 MUJOCO_LOG.TXT
 *.out
 ;
+director/
+launch.json
