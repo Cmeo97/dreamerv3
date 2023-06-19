@@ -379,6 +379,7 @@ class ImagActorCritic(nj.Module):
       normed_base = (base - offset_base) / invscale_base
       #normed_base = (base - offset) / invscale
       advs.append((normed_ret - normed_base) * self.scales[key] / total)
+      metrics.update(jaxutils.tensorstats((normed_ret - normed_base), f'{key}_adv'))
       metrics.update(jaxutils.tensorstats(rew, f'{key}_reward'))
       metrics.update(jaxutils.tensorstats(ret, f'{key}_return_raw'))
       metrics.update(jaxutils.tensorstats(normed_ret, f'{key}_return_normed'))

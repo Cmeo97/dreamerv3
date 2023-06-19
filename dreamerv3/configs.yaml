@@ -177,8 +177,8 @@ director: # works (till 400k steps, then diverges..)
   director_config: True
   task_behavior: Hierarchy
   expl_behavior: None
-  batch_size: 32
-  batch_length: 64
+  batch_size: 8
+  batch_length: 16
   data_loaders: 8
 
 
