@@ -1480,6 +1480,7 @@ crafter:  #same as director
 
   task: crafter_reward
   envs.amount: 1
+  imag_horizon: 16
   run:
     log_keys_max: '^log_achievement_.*'
     log_keys_sum: '^log_reward$'
