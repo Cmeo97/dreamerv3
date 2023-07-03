@@ -189,6 +189,180 @@ class RSSM(nj.Module):
       loss = jnp.maximum(loss, free)
     return loss
 
+class VPR(nj.Module):
+
+  def __init__(
+      self, deter=1024, stoch=32, classes=32, unroll=False, initial='learned',
+      unimix=0.01, action_clip=1.0, **kw):
+    self._deter = deter
+    self._stoch = stoch
+    self._classes = classes
+    self._unroll = unroll
+    self._initial = initial
+    self._unimix = unimix
+    self._action_clip = action_clip
+    self._kw = kw
+
+  def initial(self, bs):
+    if self._classes:
+      state = dict(
+          deter=jnp.zeros([bs, self._deter], f32),
+          logit=jnp.zeros([bs, self._stoch, self._classes], f32),
+          stoch=jnp.zeros([bs, self._stoch, self._classes], f32))
+    else:
+      state = dict(
+          deter=jnp.zeros([bs, self._deter], f32),
+          mean=jnp.zeros([bs, self._stoch], f32),
+          std=jnp.ones([bs, self._stoch], f32),
+          stoch=jnp.zeros([bs, self._stoch], f32))
+    if self._initial == 'zeros':
+      return cast(state)
+    elif self._initial == 'learned':
+      deter = self.get('initial', jnp.zeros, state['deter'][0].shape, f32)
+      state['deter'] = jnp.repeat(jnp.tanh(deter)[None], bs, 0)
+      state['stoch'] = self.get_stoch(cast(state['deter']))
+      return cast(state)
+    else:
+      raise NotImplementedError(self._initial)
+
+  def observe(self, embed, action, is_first, state=None):
+    swap = lambda x: x.transpose([1, 0] + list(range(2, len(x.shape))))
+    if state is None:
+      state = self.initial(action.shape[0])
+    step = lambda prev, inputs: self.obs_step(prev[0], *inputs)
+    inputs = swap(action), swap(embed), swap(is_first)
+    start = state, state
+    post, prior = jaxutils.scan(step, inputs, start, self._unroll)
+    post = {k: swap(v) for k, v in post.items()}
+    prior = {k: swap(v) for k, v in prior.items()}
+    return post, prior
+
+  def imagine(self, action, state=None):
+    swap = lambda x: x.transpose([1, 0] + list(range(2, len(x.shape))))
+    state = self.initial(action.shape[0]) if state is None else state
+    assert isinstance(state, dict), state
+    action = swap(action)
+    prior = jaxutils.scan(self.img_step, action, state, self._unroll)
+    prior = {k: swap(v) for k, v in prior.items()}
+    return prior
+
+  def get_dist(self, state, argmax=False):
+    if self._classes:
+      logit = state['logit'].astype(f32)
+      return tfd.Independent(jaxutils.OneHotDist(logit), 1)
+    else:
+      mean = state['mean'].astype(f32)
+      std = state['std'].astype(f32)
+      return tfd.MultivariateNormalDiag(mean, std)
+
+  def obs_step(self, prev_state, prev_action, embed, is_first):
+    is_first = cast(is_first)
+    prev_action = cast(prev_action)
+    if self._action_clip > 0.0:
+      prev_action *= sg(self._action_clip / jnp.maximum(
+          self._action_clip, jnp.abs(prev_action)))
+    prev_state, prev_action = jax.tree_util.tree_map(
+        lambda x: self._mask(x, 1.0 - is_first), (prev_state, prev_action))
+    prev_state = jax.tree_util.tree_map(
+        lambda x, y: x + self._mask(y, is_first),
+        prev_state, self.initial(len(is_first)))
+    prior = self.img_step(prev_state, prev_action)
+    x = jnp.concatenate([prior['deter'], jnp.reshape(embed, (-1, prior['deter'].shape[1]))], -1)
+    x = self.get('obs_out', Linear, **self._kw)(x)
+    stats = self._stats('obs_stats', x)
+    dist = self.get_dist(stats)
+    stoch = dist.sample(seed=nj.rng())
+    post = {'stoch': stoch, 'deter': prior['deter'], **stats}
+    return cast(post), cast(prior)
+
+  def img_step(self, prev_state, prev_action):
+    prev_stoch = prev_state['stoch']
+    prev_action = cast(prev_action)
+    if self._action_clip > 0.0:
+      prev_action *= sg(self._action_clip / jnp.maximum(
+          self._action_clip, jnp.abs(prev_action)))
+    if self._classes:
+      shape = prev_stoch.shape[:-2] + (self._stoch * self._classes,)
+      prev_stoch = prev_stoch.reshape(shape)
+    if len(prev_action.shape) > len(prev_stoch.shape):  # 2D actions.
+      shape = prev_action.shape[:-2] + (np.prod(prev_action.shape[-2:]),)
+      prev_action = prev_action.reshape(shape)
+    x = jnp.concatenate([prev_stoch, prev_action], -1)
+    x = self.get('img_in', Linear, **self._kw)(x)
+    x, deter = self._gru(x, prev_state['deter'])
+    x = self.get('img_out', Linear, **self._kw)(x)
+    stats = self._stats('img_stats', x)
+    dist = self.get_dist(stats)
+    stoch = dist.sample(seed=nj.rng())
+    prior = {'stoch': stoch, 'deter': deter, **stats}
+    return cast(prior)
+
+  def get_stoch(self, deter):
+    x = self.get('img_out', Linear, **self._kw)(deter)
+    stats = self._stats('img_stats', x)
+    dist = self.get_dist(stats)
+    return cast(dist.mode())
+
+  def _gru(self, x, deter):
+    x = jnp.concatenate([deter, x], -1)
+    kw = {**self._kw, 'act': 'none', 'units': 3 * self._deter}
+    x = self.get('gru', Linear, **kw)(x)
+    reset, cand, update = jnp.split(x, 3, -1)
+    reset = jax.nn.sigmoid(reset)
+    cand = jnp.tanh(reset * cand)
+    update = jax.nn.sigmoid(update - 1)
+    deter = update * cand + (1 - update) * deter
+    return deter, deter
+
+  def _stats(self, name, x):
+    if self._classes:
+      x = self.get(name, Linear, self._stoch * self._classes)(x)
+      logit = x.reshape(x.shape[:-1] + (self._stoch, self._classes))
+      if self._unimix:
+        probs = jax.nn.softmax(logit, -1)
+        uniform = jnp.ones_like(probs) / probs.shape[-1]
+        probs = (1 - self._unimix) * probs + self._unimix * uniform
+        logit = jnp.log(probs)
+      stats = {'logit': logit}
+      return stats
+    else:
+      x = self.get(name, Linear, 2 * self._stoch)(x)
+      mean, std = jnp.split(x, 2, -1)
+      std = 2 * jax.nn.sigmoid(std / 2) + 0.1
+      return {'mean': mean, 'std': std}
+
+  def _mask(self, value, mask):
+    return jnp.einsum('b...,b->b...', value, mask.astype(value.dtype))
+
+  def dyn_loss(self, post, prior, impl='kl', free=1.0):
+    if impl == 'kl':
+      loss = self.get_dist(sg(post)).kl_divergence(self.get_dist(prior))
+    elif impl == 'logprob':
+      loss = -self.get_dist(prior).log_prob(sg(post['stoch']))
+    else:
+      raise NotImplementedError(impl)
+    if free:
+      loss = jnp.maximum(loss, free)
+    return loss
+
+  def rep_loss(self, post, prior, impl='kl', free=1.0, balance=1.0):
+    if impl == 'kl':
+      lhs = self.get_dist(post).kl_divergence(self.get_dist(sg(prior)))
+      rhs = self.get_dist(sg(post)).kl_divergence(self.get_dist(prior))
+      loss = balance * lhs + (1 - balance) * rhs
+    elif impl == 'uniform':
+      uniform = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), prior)
+      loss = self.get_dist(post).kl_divergence(self.get_dist(uniform))
+    elif impl == 'entropy':
+      loss = -self.get_dist(post).entropy()
+    elif impl == 'none':
+      loss = jnp.zeros(post['deter'].shape[:-1])
+    else:
+      raise NotImplementedError(impl)
+    if free:
+      loss = jnp.maximum(loss, free)
+    return loss
+
 
 class MultiEncoder(nj.Module):
 
@@ -446,6 +620,102 @@ class ImageDecoderResnet(nj.Module):
     else:
       x = x + 0.5
     return x
+
+class GRU(nj.Module):
+
+  def __init__(
+      self, shape, layers, units, inputs=['tensor'], dims=None,
+      symlog_inputs=False, **kw):
+    assert shape is None or isinstance(shape, (int, tuple, dict)), shape
+    if isinstance(shape, int):
+      shape = (shape,)
+    self._shape = shape
+    self._layers = layers
+    self._units = units
+    self._inputs = Input(inputs, dims=dims)
+    self._symlog_inputs = symlog_inputs
+    self._deter = deter
+    self._classes = classes
+    self._unroll = unroll
+    self._initial = initial
+    self._unimix = unimix
+    self._action_clip = action_clip
+    self._kw = kw
+    try:
+      director = kw.pop('director')
+    except:
+      director = False
+    if director:
+      distkeys = (
+        'dist', 'outscale', 'minstd', 'maxstd', 'unimix', 'outnorm')
+    else: 
+      distkeys = (
+        'dist', 'outscale', 'minstd', 'maxstd', 'outnorm', 'unimix', 'bins')
+    self._dense = {k: v for k, v in kw.items() if k not in distkeys}
+    self._dist = {k: v for k, v in kw.items() if k in distkeys}
+
+  def initial(self, bs):
+    if self._classes:
+      state = dict(
+          deter=jnp.zeros([bs, self._deter], f32))
+    else:
+      state = dict(
+          deter=jnp.zeros([bs, self._deter], f32))
+    if self._initial == 'zeros':
+      return cast(state)
+    elif self._initial == 'learned':
+      deter = self.get('initial', jnp.zeros, state['deter'][0].shape, f32)
+      state['deter'] = jnp.repeat(jnp.tanh(deter)[None], bs, 0)
+      return cast(state)
+    else:
+      raise NotImplementedError(self._initial)
+
+
+  def __call__(self, inputs, state):
+    swap = lambda x: x.transpose([1, 0] + list(range(2, len(x.shape))))
+    if state is None:
+      state = self.initial(action.shape[0])
+    step = lambda prev, inputs: self.observe(prev[0], *inputs)
+    inputs = swap(action), swap(embed), swap(is_first)
+    start = state, state
+    x = jaxutils.scan(step, inputs, start, self._unroll)
+    #post = {k: swap(v) for k, v in post.items()}
+    #prior = {k: swap(v) for k, v in prior.items()}
+    if self._shape is None:
+      return x
+    elif isinstance(self._shape, tuple):
+      return self._out('out', self._shape, x)
+    elif isinstance(self._shape, dict):
+      return {k: self._out(k, v, x) for k, v in self._shape.items()}
+    else:
+      raise ValueError(self._shape)
+
+  def observe(self, inputs, deter):
+    feat = self._inputs(inputs)
+    if self._symlog_inputs:
+      feat = jaxutils.symlog(feat)
+    x = jaxutils.cast_to_compute(feat)
+    x = x.reshape([-1, x.shape[-1]])
+    x = self.get('img_in', Linear, **self._kw)(x)
+    x, deter = self._gru(x, deter)
+    x = self.get('img_out', Linear, **self._kw)(x)
+    x = x.reshape(feat.shape[:-1] + (x.shape[-1],))
+    return x
+
+  def _gru(self, x, deter):
+    x = jnp.concatenate([deter, x], -1)
+    kw = {**self._kw, 'act': 'none', 'units': 3 * self._deter}
+    x = self.get('gru', Linear, **kw)(x)
+    reset, cand, update = jnp.split(x, 3, -1)
+    reset = jax.nn.sigmoid(reset)
+    cand = jnp.tanh(reset * cand)
+    update = jax.nn.sigmoid(update - 1)
+    deter = update * cand + (1 - update) * deter
+    return deter, deter
+
+  def _out(self, name, shape, x):
+    return self.get(f'dist_{name}', Dist, shape, **self._dist)(x)
+
 
 
 class MLP(nj.Module):

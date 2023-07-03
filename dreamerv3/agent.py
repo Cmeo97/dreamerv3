@@ -51,34 +51,42 @@ class Agent(nj.Module):
     return (
         self.wm.initial(batch_size),
         self.task_behavior.initial(batch_size),
-        self.expl_behavior.initial(batch_size))
+        self.expl_behavior.initial(batch_size), 
+        self.task_behavior.vpr_initial(batch_size))
 
   def train_initial(self, batch_size):
-    return self.wm.initial(batch_size)
+    return (self.wm.initial(batch_size), self.task_behavior.vpr_initial(batch_size))
 
   def policy(self, obs, state, mode='train'):
     self.config.jax.jit and print('Tracing policy function.')
     obs = self.preprocess(obs)
-    (prev_latent, prev_action), task_state, expl_state = state
+    (prev_latent, prev_action), task_state, expl_state, vpr_state = state
     embed = self.wm.encoder(obs)
     latent, _ = self.wm.rssm.obs_step(
         prev_latent, prev_action, embed, obs['is_first'])
-    self.expl_behavior.policy(latent, expl_state)
+    #self.expl_behavior.policy(latent, expl_state)
     task_outs, task_state = self.task_behavior.policy(latent, task_state)
     expl_outs, expl_state = self.expl_behavior.policy(latent, expl_state)
     if mode == 'eval':
       outs = task_outs
       outs['action'] = outs['action'].sample(seed=nj.rng())
       outs['log_entropy'] = jnp.zeros(outs['action'].shape[:1])
+      vpr_state[1]['skill'] = task_state['skill']
+      vpr_state[1]['log_entropy'] = task_state['skill_lent']
     elif mode == 'explore':
       outs = expl_outs
       outs['log_entropy'] = outs['action'].entropy()
       outs['action'] = outs['action'].sample(seed=nj.rng())
+      vpr_state[1]['skill'] = expl_state['skill']
+      vpr_state[1]['log_entropy'] = expl_state['skill_lent']
     elif mode == 'train':
       outs = task_outs
       outs['log_entropy'] = outs['action'].entropy()
       outs['action'] = outs['action'].sample(seed=nj.rng())
-    state = ((latent, outs['action']), task_state, expl_state)
+      vpr_state[1]['skill'] = task_state['skill']
+      vpr_state[1]['log_entropy'] = task_state['skill_lent']
+    
+    state = (latent, outs['action']), task_state, expl_state, vpr_state
     return outs, state
 
   def train(self, data, state):
@@ -87,15 +95,12 @@ class Agent(nj.Module):
     data = self.preprocess(data)
     state, wm_outs, mets = self.wm.train(data, state)
     metrics.update(mets)
-    context = {**data, **wm_outs['post']}
+    context = {**data, **wm_outs['post'], 'state': state}
     start = tree_map(lambda x: x.reshape([-1] + list(x.shape[2:])), context)
-    _, mets = self.task_behavior.train(self.wm.imagine, start, context)
+    mets, state = self.task_behavior.train(self.wm.imagine, start, context)
     metrics.update(mets)
-    if self.config.expl_behavior != 'None':
-      _, mets = self.expl_behavior.train(self.wm.imagine, start, context)
-      metrics.update({'expl_' + key: value for key, value in mets.items()})
-    outs = {}
-    return outs, state, metrics
+
+    return state, metrics
 
   def report(self, data):
     self.config.jax.jit and print('Tracing report function.')
@@ -164,7 +169,7 @@ class WorldModel(nj.Module):
 
     embed = self.encoder(data)
    
-    prev_latent, prev_action = state
+    (prev_latent, prev_action), vpr_state = state
     prev_actions = jnp.concatenate([
         prev_action[:, None], data['action'][:, :-1]], 1)
     post, prior = self.rssm.observe(
@@ -194,7 +199,7 @@ class WorldModel(nj.Module):
     out.update({f'{k}_loss': v for k, v in losses.items()})
     last_latent = {k: v[:, -1] for k, v in post.items()}
     last_action = data['action'][:, -1]
-    state = last_latent, last_action
+    state = (last_latent, last_action), vpr_state
     metrics = self._metrics(data, dists, post, prior, losses, model_loss)
     if self.config.wmkl_active:
       metrics.update({f'wmkl_{k}': v for k, v in mets.items()})
@@ -282,7 +287,7 @@ class WorldModel(nj.Module):
 
 
   def report(self, data):
-    state = self.initial(len(data['is_first']))
+    state = self.initial(len(data['is_first'])), None
     report = {}
     report.update(self.loss(data, state)[-1][-1])
     context, _ = self.rssm.observe(

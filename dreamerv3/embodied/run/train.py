@@ -65,7 +65,7 @@ def train(agent, env, replay, logger, args):
     driver(random_agent.policy, steps=100)
   logger.add(metrics.result())
   logger.write()
-
+  
   dataset = agent.dataset(replay.dataset)
   state = [None]  # To be writable from train step function below.
   batch = [None]
@@ -73,7 +73,11 @@ def train(agent, env, replay, logger, args):
     for _ in range(should_train(step)):
       with timer.scope('dataset'):
         batch[0] = next(dataset)
+
+      if state[0] is not None:
+        state[0] = (state[0][0], tran['vpr_state'])
       state[0], mets = agent.train(batch[0], state[0])  # it was outs, state[0], mets = agent.train(batch[0], state[0], init_only=True)
+      
       metrics.add(mets, prefix='train')
       #if 'priority' in outs:
       #  print('Prioritize replay.')
@@ -105,6 +109,7 @@ def train(agent, env, replay, logger, args):
   print('Start training loop.')
   policy = lambda *args: agent.policy(
       *args, mode='explore' if should_expl(step) else 'train')
+  
   while step < args.steps:
     driver(policy, steps=100)
     if should_save(step):

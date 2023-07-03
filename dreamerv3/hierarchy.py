@@ -76,6 +76,9 @@ class Hierarchy(nj.Module):
       self.imagine = lambda start: self.wm.imagine_carry(
         self.policy, True, start, self.config.imag_horizon,
           self.initial(len(start['is_first'])))
+
+    self.vpr = nets.VPR(**config.vpr, name='vpr')
+    self.scales = self.config.vpr_loss_scales.copy()
     
   
 
@@ -86,6 +89,10 @@ class Hierarchy(nj.Module):
         'goal': jnp.zeros((batch_size,) + self.goal_shape, jnp.float32),
     }
 
+  def vpr_initial(self, batch_size):
+    prev_latent = self.vpr.initial(batch_size)
+    prev_action = {'skill':jnp.zeros((batch_size, self.config.batch_length, *self.skill_space.shape))}
+    return prev_latent, prev_action 
 
   def policy(self, latent, carry, imag=False):
     duration = self.config.train_skill_duration if imag else (
@@ -107,59 +114,21 @@ class Hierarchy(nj.Module):
       outs['log_goal'] = self.wm.heads['decoder']({
           'deter': goal, 'stoch': self.wm.rssm.get_stoch(goal),
       })['image'].mode()
-    carry = {'step': carry['step'] + 1, 'skill': skill, 'goal': goal}
+    carry = {'step': carry['step'] + 1, 'skill': skill, 'goal': goal, 'skill_lent': self.manager.actor(sg(latent)).entropy()}
     return outs, carry
 
   def train(self, imagine, start, data):
     success = lambda rew: (rew[-1] > 0.7).astype(jnp.float32).mean()
     metrics = {}
-    metrics.update(self.train_vae_replay(data)) 
-    if self.config.train_jointly == 'efficient':
-      traj, mets = self.train_jointly_efficiently(start) 
-    else:
-      traj, mets = self.train_jointly(start)
+    #metrics.update(self.train_vae_replay(data))
+    mets, state = self.train_vpr(data, data['state'])
+    #metrics.update(mets)
+    traj, mets = self.train_jointly(start)
     metrics.update(mets)
     metrics['success_manager'] = success(traj['reward_goal'])
-    return None, metrics
+    return metrics, state
 
-  def train_jointly(self, start):  # Theoretically Wrong (Probably)
-    start = start.copy()
-    metrics = {}
-
-    def wloss(start):
-      traj = self.imagine(start)
-      traj['reward_extr'] = self.extr_reward(traj)
-      traj['reward_expl'] = self.expl_reward(traj)
-      traj['reward_goal'] = self.goal_reward(traj)
-      wtraj = self.split_traj(traj)
-      loss, metrics = self.worker.loss(wtraj)
-      return loss, (wtraj, metrics)
-    def mloss(start):
-      traj = self.imagine(start)
-      traj['reward_extr'] = self.extr_reward(traj)
-      traj['reward_expl'] = self.expl_reward(traj)
-      traj['reward_goal'] = self.goal_reward(traj)
-      mtraj = self.abstract_traj(traj)
-      loss, metrics = self.manager.loss(mtraj)
-      return loss, (mtraj, metrics, traj)
-    
-
-    mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
-    worker_metrics.update({f'{k}': v for k, v in mets.items()})
-    for key, critic in self.worker.critics.items():
-      mets = critic.train(wtraj, self.worker.actor)
-      worker_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
-    
-    mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
-    manager_metrics.update({f'{k}': v for k, v in mets.items()})
-    for key, critic in self.manager.critics.items():
-      mets = critic.train(mtraj, self.manager.actor)
-      manager_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
-    metrics.update({f'worker_{k}': v for k, v in worker_metrics.items()}) 
-    metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
-    return traj, metrics
-
-  def train_jointly_efficiently(self, start):  # Theoretically Correct (Probably)
+  def train_jointly(self, start):  
     start = start.copy()
     metrics = {}
 
@@ -228,35 +197,68 @@ class Hierarchy(nj.Module):
 
     return metrics
 
+  def train_vpr(self, data, state):
+    metrics = {}
+    feat = self.feat(data).astype(jnp.float32)
+    if 'context' in self.config.goal_decoder.inputs:
+      if self.config.vae_span:
+        context = feat[:, 0]
+        goal = feat[:, -1]
+      else:
+        assert feat.shape[1] > self.config.train_skill_duration
+        context = feat[:, :-self.config.train_skill_duration]
+        goal = feat[:, self.config.train_skill_duration:]
+    else:
+      goal = context = feat
+    
+    (last_latent, last_action), vpr_state = state
+    def loss(goal, data, context, vpr_state): 
+      losses = {}
+      enc = self.enc({'goal': goal, 'context': context})
+      embed = enc.sample(seed=nj.rng())
+      (prev_latent, prev_action) = vpr_state
+      post, prior = self.vpr.observe(
+        embed, prev_action['skill'], data['is_first'], prev_latent)
+      #feats = {**post, 'skill': embed, 'context': context}
+      dec = self.dec({**post, 'skill': embed, 'context': context})
+      rec = -dec.log_prob(sg(goal))
+      losses['vpr_rep'] = rec
+      losses['vpr_dyn_kl'] = self.vpr.dyn_loss(post, prior, **self.config.vpr_dyn_loss)
+      kl = tfd.kl_divergence(enc, self.prior)
+      losses['vpr_rep_kl'], mets = self.update_kl(kl)
+      assert rec.shape == kl.shape, (rec.shape, kl.shape)
+      scaled = {k: v * self.scales[k] for k, v in losses.items()}
+      model_loss = sum(scaled.values())
+      out = {'embed':  embed, 'post': post, 'prior': prior}
+      out.update({f'{k}_loss': v for k, v in losses.items()})
+      last_latent = {k: v[:, -1] for k, v in post.items()}
+      vpr_state = (last_latent, prev_action)
+      metrics = self._metrics(post, prior, losses, model_loss)
+      mets['rec_mean'] = rec.mean()
+      mets['rec_std'] = rec.std()
+      mets['loss'] = model_loss.mean()
+      return model_loss.mean(), (vpr_state, metrics)
+    
+    modules = [self.enc, self.dec, self.vpr]
+    mets, (vpr_state, metrics_)  = self.opt(modules, loss, goal, data, context, vpr_state, has_aux=True)
+    metrics_.update(mets)
+    metrics.update({f'vpr_{k}': v for k, v in metrics_.items()})
+    state = (last_latent, last_action), vpr_state
+    
+    return metrics, state
 
-#def train_vae_imag(self, traj):
-#  metrics = {}
-#  feat = self.feat(traj).astype(tf.float32)
-#  if 'context' in self.config.goal_decoder.inputs:
-#    if self.config.vae_span:
-#      context = feat[0]
-#      goal = feat[-1]
-#    else:
-#      assert feat.shape[0] > self.config.train_skill_duration
-#      context = feat[:-self.config.train_skill_duration]
-#      goal = feat[self.config.train_skill_duration:]
-#  else:
-#    goal = context = feat
-#  with tf.GradientTape() as tape:
-#    enc = self.enc({'goal': goal, 'context': context})
-#    dec = self.dec({'skill': enc.sample(), 'context': context})
-#    rec = -dec.log_prob(sg(goal.astype(tf.float32)))
-#    if self.config.goal_kl:
-#      kl = tfd.kl_divergence(enc, self.prior)
-#      kl, mets = self.kl(kl)
-#      metrics.update({f'goalkl_{k}': v for k, v in mets.items()})
-#    else:
-#      kl = 0.0
-#    loss = (rec + kl).mean()
-#  metrics.update(self.opt(tape, loss, [self.enc, self.dec]))
-#  metrics['goalrec_mean'] = rec.mean()
-#  metrics['goalrec_std'] = rec.std()
-#  return metrics
+
+  def _metrics(self, post, prior, losses, model_loss):
+    entropy = lambda feat: self.vpr.get_dist(feat).entropy()
+    metrics = {}
+    metrics.update(jaxutils.tensorstats(entropy(prior), 'prior_ent'))
+    metrics.update(jaxutils.tensorstats(entropy(post), 'post_ent'))
+    metrics.update({f'{k}_loss_mean': v.mean() for k, v in losses.items()})
+    metrics.update({f'{k}_loss_std': v.std() for k, v in losses.items()})
+    metrics['model_loss_mean'] = model_loss.mean()
+    metrics['model_loss_std'] = model_loss.std()
+    return metrics
+
 
   def propose_goal(self, start, impl):
     feat = self.feat(start).astype(jnp.float32)

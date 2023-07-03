@@ -62,7 +62,8 @@ class Driver:
     for i in range(len(self._env)):
       trn = {k: v[i] for k, v in trns.items()}
       [self._eps[i][k].append(v) for k, v in trn.items()]
-      [fn(trn, i, **self._kwargs) for fn in self._on_steps]
+      #[fn(trn, i, **self._kwargs) for f, fn in enumerate(self._on_steps)]
+      [fn(trn, i, **self._kwargs) if f<=1 else fn({**trn, 'vpr_state': self._state[3]}, i, **self._kwargs) for f, fn in enumerate(self._on_steps)]
       step += 1
     if obs['is_last'].any():
       for i, done in enumerate(obs['is_last']):

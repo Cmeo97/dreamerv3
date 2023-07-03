@@ -12,7 +12,9 @@
 # 1. Load the required modules
 #module load anaconda/3
 #module load cuda/11.2
-conda activate ~/conda/envs/directorv2  #tf211-jax044-py310
+conda activate eh-dreamer  #tf211-jax044-py310
+export XLA_FLAGS=--xla_gpu_cuda_data_dir=$CONDA_PREFIX
+
 #conda activate ~/.conda/envs/mamba/envs/ECS
 #source  ~/.venvs/${conda_env}/bin/activate
 
@@ -24,9 +26,9 @@ device=$5
 
 export CUDA_VISIBLE_DEVICES=${device}
 
-nohup python dreamerv3/train.py \
+python dreamerv3/train.py \
   --exp_config ${config} \
   --logdir director/logdir/loconav/loconav_ant_maze_m/${f}-$(date +%Y%m%d-%H%M%S) \
   --configs ${env} \
   --task ${task} \
-> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).err
+#> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).out 2> logs_training/dreamer_training_"${task}"_"${config}""-"$(date +%Y%m%d-%H%M%S).err
