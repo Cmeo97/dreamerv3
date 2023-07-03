@@ -3,6 +3,7 @@ import pathlib
 import sys
 import warnings
 from functools import partial as bind
+import ruamel.yaml as yaml
 
 warnings.filterwarnings('ignore', '.*box bound precision lowered.*')
 warnings.filterwarnings('ignore', '.*using stateful random seeds*')
@@ -22,11 +23,14 @@ from embodied import wrappers
 
 def main(argv=None):
   from . import agent as agt
-  experiment_configs = argv.pop(1)
-  _ = argv.pop(0)
-  parsed, other = embodied.Flags(configs=[experiment_configs]).parse_known(argv)
-  config = embodied.Config(agt.Agent.configs[experiment_configs])
   
+  parsed, other = embodied.Flags(configs=['defaults']).parse_known(argv)
+  _ = other.pop(0)
+  model = other.pop(0)
+  configs = yaml.YAML(typ='safe').load(
+      (embodied.Path(__file__).parent / f'configs/{model}.yaml').read())
+  agt.Agent.configs['defaults'] = configs['defaults']
+  config = embodied.Config(agt.Agent.configs['defaults'])
   for name in parsed.configs:
     config = config.update(agt.Agent.configs[name])
   config = embodied.Flags(config).parse(other)

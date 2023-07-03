@@ -24,13 +24,7 @@ from . import ninjax as nj
 class Agent(nj.Module):
 
   configs = yaml.YAML(typ='safe').load(
-      (embodied.Path(__file__).parent / 'configs.yaml').read())
-  
-  #if configs['defaults']['director_config']:
-  #  print('director_config is not None')
-  #  del configs
-  #  configs = yaml.YAML(typ='safe').load(
-  #      (embodied.Path(__file__).parent / 'configs_directorV2.yaml').read())
+      (embodied.Path(__file__).parent / 'configs/configs.yaml').read())
   
   def __init__(self, obs_space, act_space, step, config):
     self.config = config
