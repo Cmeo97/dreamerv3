@@ -1,0 +1,347 @@
+defaults: 
+
+  seed: 0
+  method: name
+  task: dummy_disc
+  logdir: ~/scratch/dreamerv3/logdir
+  replay: uniform
+  replay_size: 1e6
+  replay_online: False
+  eval_dir: ''
+  filter: '.*'
+  multi-gpu: False
+
+  jax:
+    platform: gpu
+    jit: True
+    precision: bfloat16
+    prealloc: True
+    debug_nans: False
+    logical_cpus: 0
+    debug: False
+    policy_devices: [0]
+    train_devices: [0]
+    metrics_every: 10
+
+  run:
+    script: train
+    steps: 1e10
+    expl_until: 0
+    log_every: 300
+    save_every: 900
+    eval_every: 1e6
+    eval_eps: 1
+    eval_samples: 1
+    train_ratio: 32.0
+    train_every: 1
+    train_steps: 1
+    train_fill: 0
+    eval_fill: 0
+    pretrain: 1
+    log_zeros: False
+    log_keys_video: [image]
+    log_keys_sum: '^$'
+    log_keys_mean: '(log_entropy)'
+    log_keys_max: '^$'
+    from_checkpoint: ''
+    log_timings: True
+    sync_every: 10
+    # actor_addr: 'tcp://127.0.0.1:5551'
+    actor_addr: 'ipc:///tmp/5551'
+    actor_batch: 32
+
+  envs: {amount: 4, parallel: process, length: 0, reset: True, restart: True, discretize: 0, checks: False}
+  wrapper: {length: 0, reset: True, discretize: 0, checks: False}
+  env:
+    atari: {size: [64, 64], repeat: 4, sticky: True, gray: False, actions: all, lives: unused, noops: 0, resize: opencv}
+    dmlab: {size: [64, 64], repeat: 4, episodic: True}
+    minecraft: {size: [64, 64], break_speed: 100.0}
+    dmc: {size: [64, 64], repeat: 2, camera: -1}
+    loconav: {size: [64, 64], repeat: 2, camera: -1}
+
+  # Agent
+  director_config: True
+  task_behavior: Hierarchy
+  expl_behavior: None
+  batch_size: 8
+  batch_length: 16
+  data_loaders: 8
+
+
+  # World Model
+  grad_heads: [decoder, reward, cont]
+  rssm: {units: 1024, deter: 1024, stoch: 32, classes: 32, act: elu, norm: layer, initial: learned, unroll: True}
+  encoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [4, 4, 4, 4], cnn_blocks: 0, resize: stride, winit: normal, fan: avg, symlog_inputs: False}
+  decoder: {mlp_keys: '.*', cnn_keys: '.*', act: elu, norm: layer, mlp_layers: 4, mlp_units: 512, cnn: simple, cnn_depth: 64, cnn_kernels: [5, 5, 6, 6], cnn_blocks: 0, image_dist: mse, vector_dist: symlog_mse, inputs: [deter, stoch], resize: stride, winit: normal, fan: avg, outscale: 1.0, cnn_sigmoid: False}
+  reward_head: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog_mse, outscale: 0.1, inputs: [deter, stoch]}
+  cont_head: {layers: 4, units: 512, act: elu, norm: layer, dist: binary, outscale: 0.1, inputs: [deter, stoch]}
+  loss_scales: {image: 1.0, vector: 1.0, reward: 1.0, cont: 1.0, dyn: 0.5, rep: 0.1, actor: 1.0, critic: 1.0, slowreg: 1.0}
+  dyn_loss: {impl: kl, free: 1.0}
+  rep_loss: {impl: kl, free: 1.0}
+  model_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  wmkl: {impl: mult, scale: 0.1, target: 3.5, min: 1e-5, max: 1.0, vel: 0.1}
+  wmkl_balance: 0.8
+  wmkl_active: False
+
+  # Actor Critic
+  actor: {layers: 4, units: 512, act: elu, norm: layer, minstd: 0.03, maxstd: 1.0, outscale: 0.1, unimix: 0.01, inputs: [deter, stoch]}
+  critic: {layers: 4, units: 512, act: elu, norm: layer, dist: symlog, outscale: 0.1, inputs: [deter, stoch], director: True}
+  actor_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  critic_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  actor_dist_disc: onehot
+  actor_dist_cont: normal
+  actor_grad_disc: reinforce
+  actor_grad_cont: backprop
+  critic_type: vfunction
+  imag_horizon: 8
+  imag_unroll: True
+  imag_discount: 0.99
+  discount: 0.99
+  horizon: 333
+  actent_active: False
+  actent: {impl: mult, scale: 3e-3, target: 0.5, min: 1e-5, max: 1e2, vel: 0.1}
+  actent_norm: True
+  actent_perdim: True
+  return_lambda: 0.95
+  critic_slowreg: logprob
+  slow_critic_update: 100
+  slow_critic_fraction: 1.0
+  slow_critic: True
+  advnorm: {impl: mean_std, decay: 0.99, max: 1e8}
+  retnorm: {impl: std, decay: 0.999, max: 1e2}
+  scorenorm: {impl: off, decay: 0.99, max: 1e8}
+ 
+
+  # HRL
+  env_skill_duration: 8
+  train_skill_duration: 8
+  skill_shape: [8, 8]
+  manager_rews: {extr: 1.0, expl: 0.1, goal: 0.0}
+  worker_rews: {extr: 0.0, expl: 0.0, goal: 1.0}
+  worker_inputs: [deter, stoch, goal]
+  worker_report_horizon: 8
+  skill_proposal: manager
+  goal_proposal: replay
+  goal_reward: cosine_max
+  goal_encoder: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, unimix: 0.0, inputs: [goal], director: True}
+  goal_decoder: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1, inputs: [skill], director: True}
+  vpr: {units: 64, deter: 64, stoch: 8, classes: 8, act: elu, norm: layer, initial: learned, unroll: True}
+  vpr_dyn_loss: {impl: kl, free: 0.1}
+  vpr_loss_scales: {vpr_rep: 1.0, vpr_dyn_kl: 0.5, vpr_rep_kl: 1.0}
+  worker_goals: [manager]
+  vae_imag: False
+  vae_replay: True
+  vae_span: False
+  encdec_kl: {impl: mult, scale: 0.0, target: 10.0, min: 1e-5, max: 1.0}
+  encdec_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2, wd_pattern: 'kernel'}
+  explorer: False
+  explorer_repeat: False
+  expl_rew: adver
+  manager_dist: onehot
+  manager_grad: reinforce
+  manager_actent: 0.5
+  adver_impl: squared
+  manager_delta: False
+  goal_kl: True
+  imagine: Dreamer 
+  train_jointly: efficient
+
+
+  # Exploration
+  expl_rewards: {extr: 0.0, disag: 0.0, vae: 0.0, ctrl: 0.0, pbe: 0.0}
+  expl_discount: 0.99
+  expl_retnorm: {impl: std, decay: 0.999, max: 1e8}
+  expl_scorenorm: {impl: off, decay: 0.999, max: 1e8}
+  disag_head: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch, action]}
+  expl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  disag_target: [stoch]
+  disag_models: 8
+  ctrl_embed: {layers: 3, units: 512, act: elu, norm: layer, dist: mse, inputs: [deter, stoch]}
+  ctrl_head: {layers: 1, units: 128, act: elu, norm: layer, dist: mse, inputs: [current, next]}
+  ctrl_size: 32
+  ctrl_opt: {opt: adam, lr: 1e-4, eps: 1e-6, clip: 100.0, wd: 1e-2}
+  expl_enc: {layers: 4, units: 512, act: elu, norm: layer, dist: onehot, outscale: 0.1, inputs: [deter], shape: [8, 8]}
+  expl_dec: {layers: 4, units: 512, act: elu, norm: layer, dist: mse, outscale: 0.1}
+  expl_kl: {impl: mult, scale: 0.1, target: 10.0, min: 1e-2, max: 1.0, vel: 0.1}
+  expl_vae_elbo: False
+
+
+
+minecraft:
+
+  task: minecraft_diamond
+  envs.amount: 16
+  run:
+    script: train_save
+    eval_fill: 1e5
+    train_ratio: 16
+    log_keys_max: '^log_inventory.*'
+  encoder: {mlp_keys: 'inventory|inventory_max|equipped|health|hunger|breath|reward', cnn_keys: 'image'}
+  decoder: {mlp_keys: 'inventory|inventory_max|equipped|health|hunger|breath', cnn_keys: 'image'}
+
+dmlab:
+
+  task: dmlab_explore_goal_locations_small
+  envs.amount: 8
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  run.train_ratio: 64
+
+atari:
+
+  task: atari_pong
+  envs.amount: 8
+  run:
+    steps: 5.5e7
+    eval_eps: 10
+    train_ratio: 64
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+atari100k:
+
+  task: atari_pong
+  envs: {amount: 1}
+  env.atari: {gray: False, repeat: 4, sticky: False, noops: 30, actions: needed}
+  run:
+    script: train_eval
+    steps: 1.5e5
+    eval_every: 1e5
+    eval_initial: False
+    eval_eps: 100
+    train_ratio: 1024
+  jax.precision: float32
+  rssm.deter: 512
+  .*\.cnn_depth: 32
+  .*\.layers: 2
+  .*\.units$: 512
+  actor_eval_sample: True
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+crafter:  #same as director
+
+  task: crafter_reward
+  envs.amount: 1
+  imag_horizon: 16
+  run:
+    log_keys_max: '^log_achievement_.*'
+    log_keys_sum: '^log_reward$'
+  run.train_ratio: 512
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+dmc_vision:
+
+  task: dmc_walker_walk
+  run.train_ratio: 512
+  rssm.deter: 512
+  .*\.cnn_depth: 32
+  .*\.layers: 2
+  .*\.units: 512
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+dmc_proprio:
+
+  task: dmc_walker_walk
+  run.train_ratio: 512
+  rssm.deter: 512
+  .*\.cnn_depth: 32
+  .*\.layers: 2
+  .*\.units: 512
+  encoder: {mlp_keys: '.*', cnn_keys: '$^'}
+  decoder: {mlp_keys: '.*', cnn_keys: '$^'}
+
+bsuite:
+
+  task: bsuite_mnist/0
+  envs: {amount: 1, parallel: none}
+  run:
+    script: train
+    train_ratio: 1024  # 128 for cartpole
+  rssm.deter: 512
+  .*\.cnn_depth: 32
+  .*\.layers: 2
+  .*\.units: 512
+
+loconav:
+
+  task: loconav_ant_maze_m
+  env.loconav.repeat: 2
+  imag_horizon: 16
+  run:
+    train_ratio: 512
+    log_keys_max: '^log_.*'
+  encoder: {mlp_keys: '.*', cnn_keys: 'image'}
+  decoder: {mlp_keys: '.*', cnn_keys: 'image'}
+  
+small:
+  rssm.deter: 512
+  .*\.cnn_depth: 32
+  .*\.units: 512
+  .*\.layers: 2
+
+medium:
+  rssm.deter: 2048
+  .*\.cnn_depth: 64
+  .*\.units: 768 
+  .*\.layers: 4
+
+large:
+  rssm.deter: 2048    
+  .*\.cnn_depth: 64  
+  .*\.units: 768    
+  .*\.layers: 4   
+
+xlarge:
+  rssm.deter: 4096
+  .*\.cnn_depth: 96
+  .*\.units: 1024
+  .*\.layers: 5
+
+multicpu:
+
+  jax:
+    logical_cpus: 8
+    policy_devices: [0, 1]
+    train_devices: [2, 3, 4, 5, 6, 7]
+  run:
+    actor_batch: 4
+  envs:
+    amount: 8
+  batch_size: 12
+  batch_length: 10
+
+multigpu:
+  jax:
+    policy_devices: [0, 1, 2, 3]
+    train_devices: [0, 1, 2, 3]
+
+pinpad:
+
+  task: pinpad_five
+  encoder: {mlp_keys: '$^', cnn_keys: 'image'}
+  decoder: {mlp_keys: '$^', cnn_keys: 'image'}
+
+
+debug:
+  jax: {jit: True, prealloc: False, debug: True, platform: gpu}
+  envs: {restart: False, amount: 3}
+  wrapper: {length: 100, checks: True}
+  run:
+    eval_every: 1000
+    save_every: 10
+    train_ratio: 32
+    actor_batch: 2
+  batch_size: 8
+  batch_length: 16
+  imag_horizon: 8
+  replay_size: 1e5
+  encoder.cnn_depth: 8
+  decoder.cnn_depth: 8
+  rssm: {deter: 32, units: 16, stoch: 4, classes: 4}
+  .*unroll: False
+  .*\.layers: 2
+  .*\.units: 16
+  .*\.wd$: 0.0
