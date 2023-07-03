@@ -10,9 +10,8 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--exp_config", "director", "--logdir", "logdir/director_debug_new",
-                     "--configs", "debug"
-                    ],
+            "args": ["--exp_config", "directorv2", "--logdir", "logdir/director_debug_new",
+                    "--configs", "debug"],
             "justMyCode": true
         }
     ]
