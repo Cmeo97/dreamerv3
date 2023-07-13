@@ -61,8 +61,10 @@ def train(agent, env, replay, logger, args):
 
   print('Prefill train dataset.')
   random_agent = embodied.RandomAgent(env.act_space)
-  while len(replay) < max(args.batch_steps, args.train_fill):
-    driver(random_agent.policy, steps=100)
+  fill = max(0, max(args.batch_steps, args.train_fill) - len(replay))
+  if fill:
+    fill = max(0, max(args.batch_steps, args.train_fill) - len(replay))
+    driver(random_agent.policy, steps=fill, episodes=1)
   logger.add(metrics.result())
   logger.write()
 
@@ -70,15 +72,16 @@ def train(agent, env, replay, logger, args):
   state = [None]  # To be writable from train step function below.
   batch = [None]
   def train_step(tran, worker):
-    for _ in range(should_train(step)):
-      with timer.scope('dataset'):
-        batch[0] = next(dataset)
-      state[0], mets = agent.train(batch[0], state[0])  # it was outs, state[0], mets = agent.train(batch[0], state[0], init_only=True)
-      metrics.add(mets, prefix='train')
-      #if 'priority' in outs:
-      #  print('Prioritize replay.')
-      #  replay.prioritize(outs['key'], outs['priority'])
-      updates.increment()
+    if should_train(step):
+      for _ in range(args.train_steps):
+        with timer.scope('dataset'):
+          batch[0] = next(dataset)
+        state[0], mets = agent.train(batch[0], state[0])  # it was outs, state[0], mets = agent.train(batch[0], state[0], init_only=True)
+        metrics.add(mets, prefix='train')
+        #if 'priority' in outs:
+        #  print('Prioritize replay.')
+        #  replay.prioritize(outs['key'], outs['priority'])
+        updates.increment()
     if should_sync(updates):
       agent.sync()
     if should_log(step):

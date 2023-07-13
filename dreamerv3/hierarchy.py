@@ -88,6 +88,14 @@ class Hierarchy(nj.Module):
 
 
   def policy(self, latent, carry, imag=False):
+
+    ''' Woker-Manager policy:
+        
+      stop gradient | latent -> Manager actor -> s_goal (actions manager) | stop gradient  -> goals -> adv -> reinforce (loss used to train manager)
+      stop gradient | latent, goals -> Worker actor -> actions -> goal reward -> adv (loss used to train worker)  
+
+      Manager is not optimized using states computed here!     
+                    '''
     duration = self.config.train_skill_duration if imag else (
         self.config.env_skill_duration)
     update = (carry['step'] % duration) == 0
@@ -114,50 +122,84 @@ class Hierarchy(nj.Module):
     success = lambda rew: (rew[-1] > 0.7).astype(jnp.float32).mean()
     metrics = {}
     metrics.update(self.train_vae_replay(data)) 
-    if self.config.train_jointly == 'efficient':
-      traj, mets = self.train_jointly_efficiently(start) 
-    else:
-      traj, mets = self.train_jointly(start)
+    #if self.config.train_jointly == 'efficient':  
+    traj, mets = self.train_jointly_efficiently_dual(start) 
+    #else:
+    #  traj, mets = self.train_jointly(start)
     metrics.update(mets)
     metrics['success_manager'] = success(traj['reward_goal'])
     return None, metrics
 
-  def train_jointly(self, start):  # Theoretically Wrong (Probably)
+  #def train_jointly(self, start):  # Theoretically Wrong (Probably)
+  #  start = start.copy()
+  #  metrics = {}
+#
+  #  def wloss(start):
+  #    traj = self.imagine(start)
+  #    traj['reward_extr'] = self.extr_reward(traj)
+  #    traj['reward_expl'] = self.expl_reward(traj)
+  #    traj['reward_goal'] = self.goal_reward(traj)
+  #    wtraj = self.split_traj(traj)
+  #    loss, metrics = self.worker.loss(wtraj)
+  #    return loss, (wtraj, metrics)
+  #  def mloss(start):
+  #    traj = self.imagine(start)
+  #    traj['reward_extr'] = self.extr_reward(traj)
+  #    traj['reward_expl'] = self.expl_reward(traj)
+  #    traj['reward_goal'] = self.goal_reward(traj)
+  #    mtraj = self.abstract_traj(traj)
+  #    loss, metrics = self.manager.loss(mtraj)
+  #    return loss, (mtraj, metrics, traj)
+  #  
+#
+  #  mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
+  #  worker_metrics.update({f'{k}': v for k, v in mets.items()})
+  #  for key, critic in self.worker.critics.items():
+  #    mets = critic.train(wtraj, self.worker.actor)
+  #    worker_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+  #  
+  #  mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
+  #  manager_metrics.update({f'{k}': v for k, v in mets.items()})
+  #  for key, critic in self.manager.critics.items():
+  #    mets = critic.train(mtraj, self.manager.actor)
+  #    manager_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+  #  metrics.update({f'worker_{k}': v for k, v in worker_metrics.items()}) 
+  #  metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
+  #  return traj, metrics
+
+  def train_jointly_efficiently_dual(self, start):  # Theoretically Correct (Probably)
     start = start.copy()
     metrics = {}
 
-    def wloss(start):
+    def loss_worker(start):
       traj = self.imagine(start)
       traj['reward_extr'] = self.extr_reward(traj)
       traj['reward_expl'] = self.expl_reward(traj)
       traj['reward_goal'] = self.goal_reward(traj)
       wtraj = self.split_traj(traj)
-      loss, metrics = self.worker.loss(wtraj)
-      return loss, (wtraj, metrics)
-    def mloss(start):
-      traj = self.imagine(start)
-      traj['reward_extr'] = self.extr_reward(traj)
-      traj['reward_expl'] = self.expl_reward(traj)
-      traj['reward_goal'] = self.goal_reward(traj)
-      mtraj = self.abstract_traj(traj)
-      loss, metrics = self.manager.loss(mtraj)
-      return loss, (mtraj, metrics, traj)
-    
+      wloss, wmetrics = self.worker.loss(wtraj)
+      return wloss, (traj, wtraj, wmetrics)
 
-    mets, (wtraj, worker_metrics) = self.worker.opt(self.worker.actor, wloss, start, has_aux=True)
-    worker_metrics.update({f'{k}': v for k, v in mets.items()})
+    mets, (traj, wtraj, wmetrics) = self.worker.opt(self.worker.actor, loss_worker, start, has_aux=True)
+    metrics.update({f'worker_{k}': v for k, v in mets.items()})
+    
+    mtraj = self.abstract_traj(traj)
+    mets, mmetrics = self.manager.opt(self.manager.actor, self.manager.loss, mtraj, has_aux=True)
+    metrics.update({f'manager_{k}': v for k, v in mets.items()})
+   
     for key, critic in self.worker.critics.items():
       mets = critic.train(wtraj, self.worker.actor)
-      worker_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
+      metrics.update({f'worker_{key}_critic_{k}': v for k, v in mets.items()})
     
-    mets, (mtraj, manager_metrics, traj) = self.manager.opt(self.manager.actor, mloss, start, has_aux=True)
-    manager_metrics.update({f'{k}': v for k, v in mets.items()})
     for key, critic in self.manager.critics.items():
       mets = critic.train(mtraj, self.manager.actor)
-      manager_metrics.update({f'{key}_critic_{k}': v for k, v in mets.items()})
-    metrics.update({f'worker_{k}': v for k, v in worker_metrics.items()}) 
-    metrics.update({f'manager_{k}': v for k, v in manager_metrics.items()}) 
+      metrics.update({f'manager_{key}_critic_{k}': v for k, v in mets.items()})
+
+    metrics.update({f'worker_{k}': v for k, v in wmetrics.items()}) 
+    metrics.update({f'manager_{k}': v for k, v in mmetrics.items()}) 
+
     return traj, metrics
+
 
   def train_jointly_efficiently(self, start):  # Theoretically Correct (Probably)
     start = start.copy()
@@ -193,6 +235,44 @@ class Hierarchy(nj.Module):
     metrics.update({f'manager_{k}': v for k, v in mmetrics.items()}) 
 
     return traj, metrics
+
+
+  #def train_jointly_efficiently_new(self, start):  # Theoretically Correct (Probably)
+  #  start = start.copy()
+  #  def loss(start):
+  #    metrics = {}
+#
+  #    # Imagine Trajectory
+  #    traj = self.imagine(start)
+  #    traj['reward_extr'] = self.extr_reward(traj)
+  #    traj['reward_expl'] = self.expl_reward(traj)
+  #    traj['reward_goal'] = self.goal_reward(traj)
+  #    wtraj = self.split_traj(traj)
+  #    mtraj = self.abstract_traj(traj)
+#
+  #    ## Worker
+  #    for key, critic in self.worker.critics.items():
+  #      mets = critic.train(wtraj, self.worker.actor)
+  #      metrics.update({f'worker_{key}_critic_{k}': v for k, v in mets.items()})
+  #    wloss, wmetrics = self.worker.loss(wtraj)
+#
+  #    ## Manager
+  #    for key, critic in self.manager.critics.items():
+  #      mets = critic.train(mtraj, self.manager.actor)
+  #      metrics.update({f'manager_{key}_critic_{k}': v for k, v in mets.items()})
+  #    mloss, mmetrics = self.manager.loss(mtraj)
+  #   
+  #    metrics.update({f'worker_{k}': v for k, v in wmetrics.items()}) 
+  #    metrics.update({f'manager_{k}': v for k, v in mmetrics.items()}) 
+  #    metrics['worker_loss'] = wloss
+  #    metrics['manager_loss'] = mloss
+  #    loss = mloss + wloss
+  #    return loss, (traj, metrics)
+  #  
+  #  mets, (traj, metrics) = self.opt_actors([self.worker.actor, self.manager.actor], loss, start, has_aux=True)
+  #  metrics.update({f'agent_{k}': v for k, v in mets.items()})
+#
+  #  return traj, metrics
 
 
   def train_vae_replay(self, data):
@@ -263,17 +343,28 @@ class Hierarchy(nj.Module):
     if impl == 'replay':
       target = random.permutation(nj.rng(), feat, independent=True).astype(jnp.float32)
       skill = self.enc({'goal': target, 'context': feat}).sample(seed=nj.rng())
-      return self.dec({'skill': skill, 'context': feat}).mode()
+      return self.dec({'skill': skill, 'context': feat}).mode(), {}
     if impl == 'replay_direct':
       return random.permutation(nj.rng(), feat, independent=True).astype(jnp.float32)
     if impl == 'manager':
+      mets = {}
+      target = random.permutation(nj.rng(), feat, independent=True).astype(jnp.float32)
+      ae_skill = self.enc({'goal': target, 'context': feat}).sample(seed=nj.rng())
       skill = self.manager.actor(start).sample(seed=nj.rng())
       goal = self.dec({'skill': skill, 'context': feat}).mode()
       goal = feat + goal if self.config.manager_delta else goal
-      return goal
+      ae_goal = self.dec({'skill': ae_skill, 'context': feat}).mode()
+      ae_goal = feat + ae_goal if self.config.manager_delta else ae_goal
+      mets['goal_difference'] = jnp.mean(jnp.abs(ae_goal - goal))
+      mets['skill_space_difference'] = jnp.mean(jnp.abs(ae_skill - skill))
+      mets['ae_skill_mean'] = jnp.mean(jnp.abs(ae_skill))
+      mets['skill_mean'] = jnp.mean(jnp.abs(skill))
+      mets['goal_mean'] = jnp.mean(jnp.abs(goal))
+      mets['ae_goal_mean'] = jnp.mean(jnp.abs(ae_goal))
+      return goal, mets
     if impl == 'prior':
       skill = self.prior.sample(sample_shape=len(start['is_terminal']), seed=nj.rng())
-      return self.dec({'skill': skill, 'context': feat}).mode()
+      return self.dec({'skill': skill, 'context': feat}).mode(), {}
     raise NotImplementedError(impl)
   
 
@@ -438,8 +529,11 @@ class Hierarchy(nj.Module):
   def report(self, data):
     metrics = {}
     for impl in ('manager', 'prior', 'replay'):
-      for key, video in self.report_worker(data, impl).items():
+      (videos, mets) = self.report_worker(data, impl)
+
+      for key, video in videos.items():
         metrics[f'impl_{impl}_{key}'] = video
+      metrics.update(mets)
     return metrics
 
   def report_worker(self, data, impl):
@@ -450,7 +544,8 @@ class Hierarchy(nj.Module):
         self.wm.encoder(data)[:6], data['action'][:6], data['is_first'][:6])
     start = {k: v[:, 4] for k, v in states.items()}
     start['is_terminal'] = data['is_terminal'][:6, 4]
-    goal = self.propose_goal(start, impl)
+    goal, mets = self.propose_goal(start, impl)
+    
     # Worker rollout.
     worker = lambda s: self.worker.actor({
         **s, 'goal': goal, 'delta': goal - self.feat(s).astype(jnp.float32),
@@ -473,4 +568,4 @@ class Hierarchy(nj.Module):
         rows.append(jnp.repeat(target[k].mode()[:, None], length, 1))
       rows.append(rollout[k].mode().transpose((1, 0, 2, 3, 4)))
       videos[k] = jaxutils.video_grid(jnp.concatenate(rows, 2))
-    return videos
+    return (videos, mets)

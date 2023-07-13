@@ -5,14 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: train.py",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "~/dreamerv3/dreamerv3/train.py",
             "console": "integratedTerminal",
-            "args": ["--exp_config", "directorv2", "--logdir", "logdir/director_debug_new",
-                    "--configs", "debug"],
-            "justMyCode": true
+            "args": ["--exp_config", "director", "--logdir", "logdir/director_debug_new_antM", "--configs", "loconav", "--task", "loconav_ant_maze_s",
+                   ],
+            "justMyCode": false
         }
     ]
 }

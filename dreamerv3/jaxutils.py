@@ -406,7 +406,7 @@ class Optimizer(nj.Module):
       chain.append(optax.scale(-lr))
     self.opt = optax.chain(*chain)
     self.step = nj.Variable(jnp.array, 0, jnp.int32, name='step')
-    self.scaling = (COMPUTE_DTYPE == jnp.float16)
+    self.scaling = (COMPUTE_DTYPE == jnp.bfloat16)
     if self.scaling:
       self.opt = optax.apply_if_finite(self.opt, max_consecutive_errors=1000)
       self.grad_scale = nj.Variable(
@@ -477,6 +477,118 @@ class Optimizer(nj.Module):
         decr.astype(jnp.float32) * self.grad_scale.read() / 2,
         1e-4, 1e4))
     return finite
+
+#class Optimizer_modules(nj.Module):
+#
+#  PARAM_COUNTS = {}
+#
+#  def __init__(
+#      self, lr, opt='adam', eps=1e-5, clip=100.0, warmup=0, wd=0.0,
+#      wd_pattern=r'/(w|kernel)$', lateclip=0.0, module_names=['network']):
+#    assert opt in ('adam', 'belief', 'yogi')
+#    assert wd_pattern[0] not in ('0', '1')
+#    # assert self.path not in self.PARAM_COUNTS
+#    self.PARAM_COUNTS[self.path] = None
+#    wd_pattern = re.compile(wd_pattern)
+#    modules = {}
+#    for module in module_names:
+#      modules[module] = {}
+#      modules[module]['chain'] = []
+#      if clip:
+#        modules[module]['chain'].append(optax.clip_by_global_norm(clip))
+#      if opt == 'adam':
+#        modules[module]['chain'].append(optax.scale_by_adam(eps=eps))
+#      else:
+#        raise NotImplementedError(opt)
+#      if lateclip:
+#        modules[module]['chain'].append(late_grad_clip(lateclip))
+#      if wd:
+#        modules[module]['chain'].append(optax.additive_weight_decay(wd, lambda params: (
+#            tree_map(lambda k: bool(wd_pattern.search(k)), tree_keys(params)))))
+#      if warmup:
+#        modules[module]['schedule'] = optax.linear_schedule(0.0, -lr, warmup)
+#        modules[module]['chain'].append(optax.inject_hyperparams(optax.scale)(modules[module]['schedule']))
+#      else:
+#        modules[module]['chain'].append(optax.scale(-lr))
+#      modules[module]['opt'] = optax.chain(*modules[module]['chain'])
+#      modules[module]['step'] = nj.Variable(jnp.array, 0, jnp.int32, name=f'{module}_step')
+#      modules[module]['scaling'] = (COMPUTE_DTYPE == jnp.bfloat16)
+#      if modules[module]['scaling']:
+#        modules[module]['opt'] = optax.apply_if_finite(modules[module]['opt'], max_consecutive_errors=1000)
+#        modules[module]['grad_scale'] = nj.Variable(
+#            jnp.array, 1e4, jnp.float32, name=f'{module}_grad_scale')
+#        modules[module]['good_steps'] = nj.Variable(
+#            jnp.array, 0, jnp.int32, name=f'{module}_good_steps')
+#    self.modules = modules
+#    
+#      
+#  def __call__(self, modules, lossfn, *args, has_aux=False, **kwargs):
+#    def wrapped(*args, **kwargs):
+#      loss_sum=0
+#      outs = lossfn(*args, **kwargs)
+#      loss, aux = outs if has_aux else (outs, None)
+#      for module in loss.keys():
+#        assert loss[module].dtype == jnp.float32, (self.name, loss.dtype)
+#        assert loss[module].shape == (), (self.name, loss.shape)
+#        if self.modules[module]['scaling']:
+#          loss[module] *= sg(self.modules[module]['grad_scale'].read())
+#          loss_sum += loss[module]
+#      return loss_sum, aux
+#    
+#    # Find variables.
+#    
+#    metrics = {}
+#    loss, params, grads, aux = nj.grad(
+#        wrapped, modules, has_aux=True)(*args, **kwargs)
+#    if not self.PARAM_COUNTS[self.path]:
+#      count = sum([np.prod(x.shape) for x in params.values()])
+#      print(f'Optimizer {self.name} has {count:,} variables.')
+#      self.PARAM_COUNTS[self.path] = count
+#
+#    #Distributed Sync
+#    if parallel():
+#      grads = tree_map(lambda x: jax.lax.pmean(x, 'i'), grads)
+#
+#    # Compute scaled gradient. 
+#    if self.scaling:
+#      grads = tree_map(lambda x: x / self.grad_scale.read(), grads)
+#      finite = self._update_scale(grads)
+#      metrics[f'grad_scale'] = self.grad_scale.read()
+#      metrics[f'grad_overflow'] = (~finite).astype(jnp.float32)
+#
+#
+#    optstate = self.get('state', self.opt.init, params)
+#    updates, optstate = self.opt.update(grads, optstate, params)
+#    self.put('state', optstate)
+#    nj.context().update(optax.apply_updates(params, updates))
+#
+#    # Gradient Clipping
+#    norm = optax.global_norm(grads)
+#
+#
+#    if self.scaling:  
+#      norm = jnp.where(jnp.isfinite(norm), norm, jnp.nan)
+#    self.step.write(self.step.read() + jnp.isfinite(norm).astype(jnp.int32))
+#    metrics['loss'] = loss.mean()
+#    metrics['grad_norm'] = norm
+#    metrics['grad_steps'] = self.step.read()
+#    metrics = {f'{self.name}_{k}': v for k, v in metrics.items()}
+#    return (metrics, aux) if has_aux else metrics
+#
+#  def _update_scale(self, grads):
+#    finite = jnp.array([
+#        jnp.isfinite(x).all() for x in jax.tree_util.tree_leaves(grads)]).all()
+#    keep = (finite & (self.good_steps.read() < 1000))
+#    incr = (finite & (self.good_steps.read() >= 1000))
+#    decr = ~finite
+#    self.good_steps.write(
+#        keep.astype(jnp.int32) * (self.good_steps.read() + 1))
+#    self.grad_scale.write(jnp.clip(
+#        keep.astype(jnp.float32) * self.grad_scale.read() +
+#        incr.astype(jnp.float32) * self.grad_scale.read() * 2 +
+#        decr.astype(jnp.float32) * self.grad_scale.read() / 2,
+#        1e-4, 1e4))
+#    return finite
 
 
 def late_grad_clip(value=1.0):

@@ -176,6 +176,10 @@ class RSSM(nj.Module):
       lhs = self.get_dist(post).kl_divergence(self.get_dist(sg(prior)))
       rhs = self.get_dist(sg(post)).kl_divergence(self.get_dist(prior))
       loss = balance * lhs + (1 - balance) * rhs
+    elif impl == 'kl-director':
+      lhs = self.get_dist(post).kl_divergence(self.get_dist(sg(prior)))
+      rhs = self.get_dist(sg(post)).kl_divergence(self.get_dist(prior))
+      loss = balance * lhs + (1 - balance) * rhs
     elif impl == 'uniform':
       uniform = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), prior)
       loss = self.get_dist(post).kl_divergence(self.get_dist(uniform))
@@ -461,16 +465,7 @@ class MLP(nj.Module):
     self._units = units
     self._inputs = Input(inputs, dims=dims)
     self._symlog_inputs = symlog_inputs
-    try:
-      director = kw.pop('director')
-    except:
-      director = False
-    if director:
-      distkeys = (
-        'dist', 'outscale', 'minstd', 'maxstd', 'unimix', 'outnorm')
-    else: 
-      distkeys = (
-        'dist', 'outscale', 'minstd', 'maxstd', 'outnorm', 'unimix', 'bins')
+    distkeys = ('dist', 'outscale', 'minstd', 'maxstd', 'outnorm', 'unimix', 'bins')
     self._dense = {k: v for k, v in kw.items() if k not in distkeys}
     self._dist = {k: v for k, v in kw.items() if k in distkeys}
 

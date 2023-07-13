@@ -171,13 +171,16 @@ class WorldModel(nj.Module):
       out = out if isinstance(out, dict) else {name: out}
       dists.update(out)
     losses = {}
-    kl = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
 
     if self.config.wmkl_active:
-      losses['dyn'], mets = self.update_kl(kl)
+      kl = self.rssm.rep_loss(post, prior, **self.config.kl_loss)
+      losses['kl'], mets = self.update_kl(kl)
     else: 
+      kl = self.rssm.dyn_loss(post, prior, **self.config.dyn_loss)
       losses['dyn'] = kl
-    losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
+      losses['rep'] = self.rssm.rep_loss(post, prior, **self.config.rep_loss)
+      
+    
     for key, dist in dists.items():
       loss = -dist.log_prob(data[key].astype(jnp.float32))
       assert loss.shape == embed.shape[:2], (key, loss.shape)
@@ -253,7 +256,7 @@ class WorldModel(nj.Module):
     action = outs['action']
     if hasattr(action, 'sample'):
         action = action.sample(seed=nj.rng())
-    start = {**start,**carry, 'action': action, 'carry': carry}
+    start = {**start, **carry, 'action': action, 'carry': carry}
     def step(prev, _):
         prev = prev.copy()
         state = self.rssm.img_step(prev, prev.pop('action'))
@@ -261,7 +264,7 @@ class WorldModel(nj.Module):
         action = outs['action']
         if hasattr(action, 'sample'):
             action = action.sample(seed=nj.rng())
-        return {**state,**carry, 'action': action, 'carry': carry}
+        return {**state, **carry, 'action': action, 'carry': carry}
     traj = jaxutils.scan(
         step, jnp.arange(horizon), start, self.config.imag_unroll)
     _ = traj.pop('carry')
@@ -336,10 +339,12 @@ class ImagActorCritic(nj.Module):
     #self.scorenorms = {
     #    k: jaxutils.Moments(**config.scorenorm, name=f'scorenorm_{k}')
     #    for k in critics}
-    #self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
-    shape = act_space.shape[:-1] if act_space.discrete else act_space.shape
-    if self.config.actent_active:
-      self.update_ents = jaxutils.AutoAdapt(shape, **config.actent, inverse=True, name='ent_autoadapt', var='ent') 
+    self.opt = jaxutils.Optimizer(name=f'actor_opt', **config.actor_opt)
+    self.shape_act = act_space.shape[:-1] if act_space.discrete else act_space.shape
+    if self.config.actent_active and len(self.shape_act) > 0:
+      self.update_ents = jaxutils.AutoAdapt(self.shape_act, **config.actent, inverse=True, name='ent_autoadapt', var='ent')
+    elif self.config.actent_active and len(self.shape_act) == 0:
+      self.update_ents = jaxutils.AutoAdapt((), **config.actent, inverse=True, name='ent_autoadapt', var='ent')
      
 
   def initial(self, batch_size):
@@ -383,19 +388,24 @@ class ImagActorCritic(nj.Module):
     logpi = policy.log_prob(sg(traj['action']))[:-1]
     loss = {'backprop': -adv, 'reinforce': -logpi * sg(adv)}[self.grad]
     ent = policy.entropy()[:-1]
+  
     
-    if self.config.actent_active:
+    if self.config.actent_active and len(self.shape_act) > 0:
+      if self.config.actent_norm:
+        lo, hi = policy.minent / ent.shape[-1], policy.maxent / ent.shape[-1]
+        ent = (ent - lo) / (hi - lo)
+      ent_loss, mets = self.update_ents(ent) 
+      metrics.update({f'actor_{k}': v for k, v in mets.items()})
+    elif self.config.actent_active and len(self.shape_act) == 0: 
       if self.config.actent_norm:
         lo, hi = policy.minent, policy.maxent
         ent = (ent - lo) / (hi - lo)
       ent_loss, mets = self.update_ents(ent) 
       metrics.update({f'actor_{k}': v for k, v in mets.items()})
-      loss += ent_loss  
     else: 
-      ent_loss = self.config.actent.scale * ent
-      loss -= ent_loss 
-        
-  
+      ent_loss = -self.config.actent.scale * ent
+    
+    loss += ent_loss
     loss *= sg(traj['weight'])[:-1]
     loss *= self.config.loss_scales.actor
     metrics.update(self._metrics(traj, policy, logpi, ent, adv))
@@ -442,16 +452,16 @@ class VFunction(nj.Module):
     traj = {k: v[:-1] for k, v in traj.items()}
     dist = self.net(traj)
     loss = -dist.log_prob(sg(target))
-    if self.config.critic_slowreg == 'logprob':
-      reg = -dist.log_prob(sg(self.slow(traj).mean()))
-    elif self.config.critic_slowreg == 'xent':
-      reg = -jnp.einsum(
-          '...i,...i->...',
-          sg(self.slow(traj).probs),
-          jnp.log(dist.probs))
-    else:
-      raise NotImplementedError(self.config.critic_slowreg)
-    loss += self.config.loss_scales.slowreg * reg
+    #if self.config.critic_slowreg == 'logprob':                   In Director doesn't use any reg 
+    #  reg = -dist.log_prob(sg(self.slow(traj).mean()))
+    #elif self.config.critic_slowreg == 'xent':
+    #  reg = -jnp.einsum(
+    #      '...i,...i->...',
+    #      sg(self.slow(traj).probs),
+    #      jnp.log(dist.probs))
+    #else:
+    #  raise NotImplementedError(self.config.critic_slowreg)
+    #loss += self.config.loss_scales.slowreg * reg
     loss = (loss * sg(traj['weight'])).mean()
     loss *= self.config.loss_scales.critic
     metrics = jaxutils.tensorstats(dist.mean())
@@ -463,7 +473,7 @@ class VFunction(nj.Module):
         'should provide rewards for all but last action')
     discount = 1 - 1 / self.config.horizon
     disc = traj['cont'][1:] * discount
-    value = self.net(traj).mean()
+    value = self.slow(traj).mean()   ## in director, it uses slow_net when computing the score
     vals = [value[-1]]
     interm = rew + disc * value[1:] * (1 - self.config.return_lambda)
     for t in reversed(range(len(disc))):
