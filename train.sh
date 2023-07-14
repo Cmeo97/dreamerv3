@@ -31,7 +31,7 @@ export CUDA_VISIBLE_DEVICES=${device}
 
 
 
-python dreamerv3/train.py \
+nohup python dreamerv3/train.py \
   --exp_config ${config} \
   --logdir director/logdir/loconav/loconav_ant_maze_m/${f}-$(date +%Y%m%d-%H%M%S) \
   --configs ${env} \

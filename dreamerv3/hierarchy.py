@@ -65,7 +65,7 @@ class Hierarchy(nj.Module):
         self.goal_shape, dims='context', **self.config.goal_decoder, name='goal_decoder')
     
     self.opt = jaxutils.Optimizer(name='goal_opt', **config.encdec_opt)
-    self.opt_actors = jaxutils.Optimizer(name='actors_opt', **config.actor_opt)
+    #self.opt_actors = jaxutils.Optimizer(name='actors_opt', **config.actor_opt)
     self.update_kl = jaxutils.AutoAdapt((), **self.config.encdec_kl, name='kl_autoadapt') 
 
     if self.config.imagine == 'Director':
